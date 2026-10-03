@@ -87,7 +87,7 @@ class ReActAgent:
 
         code = self.tools.read_file(filename)
 
-        if "ZeroDivisionError" in error or "return a / b" in code:
+        if "ZeroDivisionError" in error:
             print("\nCorrection identified:")
             print("Add protection against division by zero.")
 
