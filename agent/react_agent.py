@@ -1,4 +1,5 @@
 ﻿from agent.planner import TaskPlanner
+from llm.client import LLMClient
 from tools.tool_registry import ToolRegistry
 from tools.safety import SafetyManager
 from tools.git_manager import create_checkpoint, rollback
@@ -6,7 +7,8 @@ from tools.git_manager import create_checkpoint, rollback
 
 class ReActAgent:
     def __init__(self, max_steps=5):
-        self.planner = TaskPlanner()
+        self.llm = LLMClient()
+        self.planner = TaskPlanner(self.llm)
         self.tools = ToolRegistry()
         self.safety = SafetyManager(max_steps=max_steps)
         self.history = []
@@ -72,17 +74,27 @@ class ReActAgent:
             return "SUCCESS"
 
         error = result["error"]
+        code = self.tools.read_file(filename)
 
         print("Error detected.")
         print(error)
 
-        code = self.tools.read_file(filename)
+        analysis = self.llm.analyze_error(error, code)
 
-        if "ZeroDivisionError" in error:
+        print("\nLLM ERROR ANALYSIS")
+        print("-" * 50)
+        print(analysis)
+
+        action = analysis.get("action")
+
+        if action == "fix":
+            reason = analysis.get("reason", "LLM identified a safe correction")
+
             print("\nCorrection identified:")
-            print("Add protection against division by zero.")
+            print(reason)
 
-            fixed_code = '''def divide(a, b):
+            if "ZeroDivisionError" in error:
+                fixed_code = '''def divide(a, b):
     if b == 0:
         return "Cannot divide by zero"
     return a / b
@@ -92,24 +104,28 @@ if __name__ == "__main__":
     print(divide(10, 0))
 '''
 
-            self.tools.write_file(filename, fixed_code)
+                self.tools.write_file(filename, fixed_code)
 
-            print("Fix applied through Tool Registry.")
+                print("Fix applied through Tool Registry.")
 
-            self.history.append({
-                "phase": "REFLECT",
-                "decision": "FIX",
-                "reason": "Division by zero"
-            })
+                self.history.append({
+                    "phase": "REFLECT",
+                    "decision": "FIX",
+                    "reason": reason,
+                    "llm_analysis": analysis
+                })
 
-            return "FIX"
+                return "FIX"
+
+            print("LLM requested a fix, but no safe implementation is available.")
 
         print("No safe automatic correction available.")
 
         self.history.append({
             "phase": "REFLECT",
             "decision": "STOP",
-            "reason": "Unknown error"
+            "reason": analysis.get("reason", "Unknown error"),
+            "llm_analysis": analysis
         })
 
         return "STOP"
@@ -118,6 +134,9 @@ if __name__ == "__main__":
         print("=" * 60)
         print("CODEPILOT AI - AUTONOMOUS CODING AGENT")
         print("=" * 60)
+
+        print("\nLLM MODE:")
+        print(self.llm.mode)
 
         print("\nTASK:")
         print(task)
