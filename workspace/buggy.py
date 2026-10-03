@@ -1,1 +1,5 @@
-def divide(a, b):`n    return a / b`n`nif __name__ == "__main__":`n    print(divide(10, 0))
+﻿def divide(a, b):
+    return a / b
+
+if __name__ == "__main__":
+    print(divide(10, 0))
