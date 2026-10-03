@@ -1,6 +1,8 @@
 ﻿def divide(a, b):
+    if b == 0:
+        return "Cannot divide by zero"
     return a / b
 
 
 if __name__ == "__main__":
-    print(unknown_variable)
+    print(divide(10, 0))
