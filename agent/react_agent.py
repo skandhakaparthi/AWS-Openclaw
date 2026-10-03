@@ -1,36 +1,27 @@
-﻿from tools.tool_registry import ToolRegistry
+﻿from agent.planner import TaskPlanner
+from tools.tool_registry import ToolRegistry
 from tools.safety import SafetyManager
 from tools.git_manager import create_checkpoint, rollback
 
 
 class ReActAgent:
     def __init__(self, max_steps=5):
+        self.planner = TaskPlanner()
         self.tools = ToolRegistry()
         self.safety = SafetyManager(max_steps=max_steps)
         self.history = []
         self.checkpoint = None
 
     def plan(self, task):
-        plan = [
-            "Inspect the relevant code",
-            "Execute the code",
-            "Observe the result",
-            "Analyze any error",
-            "Apply a correction if necessary",
-            "Execute again"
-        ]
-
-        print("\nPLAN")
-        print("-" * 50)
-
-        for number, step in enumerate(plan, 1):
-            print(f"{number}. {step}")
+        subtasks = self.planner.create_plan(task)
 
         self.history.append({
             "phase": "PLAN",
             "task": task,
-            "plan": plan
+            "subtasks": subtasks
         })
+
+        return subtasks
 
     def act(self, action):
         print("\nACT")
@@ -117,14 +108,15 @@ if __name__ == "__main__":
 
         self.history.append({
             "phase": "REFLECT",
-            "decision": "STOP"
+            "decision": "STOP",
+            "reason": "Unknown error"
         })
 
         return "STOP"
 
     def run(self, task, filename):
         print("=" * 60)
-        print("CODEPILOT AI - ReAct CODING AGENT")
+        print("CODEPILOT AI - AUTONOMOUS CODING AGENT")
         print("=" * 60)
 
         print("\nTASK:")
@@ -141,6 +133,10 @@ if __name__ == "__main__":
             return
 
         self.plan(task)
+
+        print("\nAVAILABLE TOOLS")
+        print("-" * 50)
+        self.tools.show_permissions()
 
         self.safety.reset()
 
