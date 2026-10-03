@@ -9,17 +9,26 @@ from tools.git_manager import create_checkpoint, rollback
 
 
 class ReActAgent:
+
     def __init__(self, max_steps=5):
+
         self.llm = LLMClient()
         self.planner = TaskPlanner(self.llm)
         self.tools = ToolRegistry()
-        self.safety = SafetyManager(max_steps=max_steps)
+
+        self.safety = SafetyManager(
+            max_steps=max_steps,
+            max_cost=0.05,
+            max_runtime_seconds=60,
+            repeated_error_limit=2
+        )
 
         self.history = []
         self.checkpoint = None
         self.task_state = None
 
     def plan(self, task):
+
         subtasks = self.planner.create_plan(task)
 
         self.history.append({
@@ -31,6 +40,7 @@ class ReActAgent:
         return subtasks
 
     def act(self, action, iteration):
+
         print("\nACT")
         print("-" * 50)
         print(action)
@@ -47,19 +57,24 @@ class ReActAgent:
         )
 
     def observe(self, filename, iteration):
+
         result = self.tools.run_python(filename)
 
         print("\nOBSERVE")
         print("-" * 50)
 
         if result["success"]:
+
             print("Execution successful.")
 
             if result["output"]:
                 print("Output:")
                 print(result["output"])
+
         else:
+
             print("Execution failed.")
+
             print("Error:")
             print(result["error"])
 
@@ -77,10 +92,12 @@ class ReActAgent:
         return result
 
     def reflect(self, result, filename, iteration):
+
         print("\nREFLECT")
         print("-" * 50)
 
         if result["success"]:
+
             print("Task appears complete.")
 
             self.history.append({
@@ -97,12 +114,19 @@ class ReActAgent:
             return "SUCCESS"
 
         error = result["error"]
+
         code = self.tools.read_file(filename)
 
-        print("Error detected.")
+        print("Error detected:")
         print(error)
 
-        analysis = self.llm.analyze_error(error, code)
+        # Runaway-loop protection
+        self.safety.record_error(error)
+
+        analysis = self.llm.analyze_error(
+            error,
+            code
+        )
 
         print("\nLLM ERROR ANALYSIS")
         print("-" * 50)
@@ -143,7 +167,9 @@ if __name__ == "__main__":
                     fixed_code
                 )
 
-                print("Fix applied through Tool Registry.")
+                print(
+                    "Fix applied through Tool Registry."
+                )
 
                 self.history.append({
                     "phase": "REFLECT",
@@ -159,7 +185,9 @@ if __name__ == "__main__":
                 "but no safe implementation is available."
             )
 
-        print("No safe automatic correction available.")
+        print(
+            "No safe automatic correction available."
+        )
 
         self.history.append({
             "phase": "REFLECT",
@@ -173,6 +201,31 @@ if __name__ == "__main__":
 
         return "STOP"
 
+    def rollback_to_checkpoint(self):
+
+        if self.checkpoint:
+
+            print(
+                "\nROLLING BACK TO CHECKPOINT"
+            )
+            print("-" * 50)
+
+            try:
+
+                rollback(
+                    self.checkpoint
+                )
+
+                print(
+                    "Rollback completed successfully."
+                )
+
+            except Exception as error:
+
+                print(
+                    f"Rollback failed: {error}"
+                )
+
     def run(self, task, filename):
 
         task_id = "task-" + uuid.uuid4().hex[:8]
@@ -180,7 +233,9 @@ if __name__ == "__main__":
         self.task_state = TaskState(task_id)
 
         print("=" * 60)
-        print("CODEPILOT AI - AUTONOMOUS CODING AGENT")
+        print(
+            "CODEPILOT AI - AUTONOMOUS CODING AGENT"
+        )
         print("=" * 60)
 
         print("\nTASK ID:")
@@ -196,6 +251,7 @@ if __name__ == "__main__":
         print("-" * 50)
 
         try:
+
             self.checkpoint = create_checkpoint()
 
             print(
@@ -208,7 +264,10 @@ if __name__ == "__main__":
                 f"Could not create checkpoint: {error}"
             )
 
-            self.task_state.set_status("FAILED")
+            self.task_state.set_status(
+                "FAILED"
+            )
+
             self.task_state.save()
 
             return
@@ -228,104 +287,170 @@ if __name__ == "__main__":
 
         self.safety.reset()
 
+        print("\nSAFETY LIMITS")
+        print("-" * 50)
+
+        print(
+            f"Maximum iterations: "
+            f"{self.safety.max_steps}"
+        )
+
+        print(
+            f"Maximum estimated cost: "
+            f"${self.safety.max_cost:.4f}"
+        )
+
+        print(
+            f"Maximum runtime: "
+            f"{self.safety.max_runtime_seconds} seconds"
+        )
+
+        print(
+            f"Repeated error limit: "
+            f"{self.safety.repeated_error_limit}"
+        )
+
         while True:
 
             try:
+
                 step = self.safety.next_step()
+
+                print(
+                    "\n" + "=" * 60
+                )
+
+                print(
+                    f"ITERATION {step}"
+                )
+
+                print(
+                    "=" * 60
+                )
+
+                self.act(
+                    "Execute target program",
+                    step
+                )
+
+                result = self.observe(
+                    filename,
+                    step
+                )
+
+                # Mock mode has zero cost.
+                # Bedrock integration can later provide
+                # a real estimated cost here.
+                self.safety.add_cost(0.00)
+
+                self.task_state.add_cost(
+                    0.00
+                )
+
+                decision = self.reflect(
+                    result,
+                    filename,
+                    step
+                )
+
+                if decision == "SUCCESS":
+
+                    print(
+                        "\nReAct loop completed successfully."
+                    )
+
+                    print(
+                        "Changes are preserved."
+                    )
+
+                    self.task_state.set_status(
+                        "SUCCESS"
+                    )
+
+                    break
+
+                if decision == "STOP":
+
+                    print(
+                        "\nAgent stopped."
+                    )
+
+                    self.task_state.set_status(
+                        "ROLLED_BACK"
+                    )
+
+                    self.rollback_to_checkpoint()
+
+                    break
+
+                if decision == "FIX":
+
+                    print(
+                        "\nReAct loop continuing..."
+                    )
 
             except RuntimeError as error:
 
                 print(
-                    f"\nHARD STOP: {error}"
+                    "\nSAFETY STOP"
+                )
+
+                print("-" * 50)
+
+                print(
+                    f"Reason: {error}"
+                )
+
+                self.history.append({
+                    "phase": "SAFETY",
+                    "decision": "STOP",
+                    "reason": str(error)
+                })
+
+                self.task_state.record_iteration(
+                    self.safety.current_step,
+                    "SAFETY",
+                    str(error)
                 )
 
                 self.task_state.set_status(
                     "ROLLED_BACK"
                 )
 
-                if self.checkpoint:
-
-                    print(
-                        "\nROLLING BACK TO CHECKPOINT"
-                    )
-
-                    rollback(
-                        self.checkpoint
-                    )
+                self.rollback_to_checkpoint()
 
                 break
 
-            print(
-                "\n" + "=" * 60
-            )
-
-            print(
-                f"ITERATION {step}"
-            )
-
-            print(
-                "=" * 60
-            )
-
-            self.act(
-                "Execute target program",
-                step
-            )
-
-            result = self.observe(
-                filename,
-                step
-            )
-
-            decision = self.reflect(
-                result,
-                filename,
-                step
-            )
-
-            if decision == "SUCCESS":
+            except Exception as error:
 
                 print(
-                    "\nReAct loop completed successfully."
+                    "\nUNEXPECTED AGENT ERROR"
                 )
+
+                print("-" * 50)
 
                 print(
-                    "Changes are preserved."
+                    f"Error: {error}"
                 )
 
-                self.task_state.set_status(
-                    "SUCCESS"
-                )
+                self.history.append({
+                    "phase": "ERROR",
+                    "error": str(error)
+                })
 
-                break
-
-            if decision == "STOP":
-
-                print(
-                    "\nAgent stopped."
+                self.task_state.record_iteration(
+                    self.safety.current_step,
+                    "ERROR",
+                    str(error)
                 )
 
                 self.task_state.set_status(
                     "ROLLED_BACK"
                 )
 
-                if self.checkpoint:
-
-                    print(
-                        "\nROLLING BACK TO CHECKPOINT"
-                    )
-
-                    rollback(
-                        self.checkpoint
-                    )
+                self.rollback_to_checkpoint()
 
                 break
-
-            if decision == "FIX":
-
-                print(
-                    "\nReAct loop continuing..."
-                )
 
         print("\nSAFETY STATUS")
         print("-" * 50)
