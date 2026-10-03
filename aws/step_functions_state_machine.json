@@ -1,0 +1,92 @@
+﻿{
+  "Comment": "CodePilot-AI Autonomous Coding Agent - Plan Execute Observe Loop",
+  "StartAt": "Plan",
+  "States": {
+    "Plan": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:REGION:ACCOUNT_ID:function:codepilot-planner",
+      "Next": "Execute"
+    },
+
+    "Execute": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::ecs:runTask.sync",
+      "Parameters": {
+        "LaunchType": "FARGATE",
+        "Cluster": "codepilot-cluster",
+        "TaskDefinition": "codepilot-executor",
+        "Overrides": {
+          "ContainerOverrides": [
+            {
+              "Name": "codepilot-executor",
+              "Environment": [
+                {
+                  "Name": "TASK_ID",
+                  "Value.$": "$.task_id"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "Next": "Observe"
+    },
+
+    "Observe": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:REGION:ACCOUNT_ID:function:codepilot-observer",
+      "Next": "CheckResult"
+    },
+
+    "CheckResult": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.success",
+          "BooleanEquals": true,
+          "Next": "Success"
+        },
+        {
+          "Variable": "$.iteration",
+          "NumericGreaterThanEquals": 5,
+          "Next": "Rollback"
+        }
+      ],
+      "Default": "AnalyzeError"
+    },
+
+    "AnalyzeError": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:REGION:ACCOUNT_ID:function:codepilot-error-analyzer",
+      "Next": "CheckCorrection"
+    },
+
+    "CheckCorrection": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.can_fix",
+          "BooleanEquals": true,
+          "Next": "Execute"
+        }
+      ],
+      "Default": "Rollback"
+    },
+
+    "Rollback": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:REGION:ACCOUNT_ID:function:codepilot-rollback",
+      "Next": "Failed"
+    },
+
+    "Success": {
+      "Type": "Succeed"
+    },
+
+    "Failed": {
+      "Type": "Fail",
+      "Error": "CodePilotTaskFailed",
+      "Cause": "Task exceeded safety limits or could not be safely corrected."
+    }
+  }
+}

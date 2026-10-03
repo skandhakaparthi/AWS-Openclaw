@@ -1,0 +1,79 @@
+﻿{
+  "project": "CodePilot-AI",
+
+  "dynamodb": {
+    "table_name": "CodePilotTaskState",
+    "partition_key": "task_id",
+    "attributes": {
+      "status": "CREATED | RUNNING | SUCCESS | FAILED | ROLLED_BACK",
+      "iterations": "number",
+      "estimated_cost": "number",
+      "started_at": "ISO-8601 timestamp",
+      "completed_at": "ISO-8601 timestamp",
+      "history": "array"
+    }
+  },
+
+  "s3": {
+    "bucket_name": "codepilot-checkpoints",
+    "purpose": [
+      "Store code snapshots",
+      "Store execution artifacts",
+      "Store task reports",
+      "Store rollback checkpoints"
+    ]
+  },
+
+  "cloudwatch": {
+    "log_group": "/codepilot/agent",
+    "metrics": [
+      "TaskSuccess",
+      "TaskFailure",
+      "TaskRollback",
+      "IterationCount",
+      "ExecutionTime",
+      "EstimatedCost",
+      "RunawayLoopDetected"
+    ],
+    "alarms": [
+      "MaximumIterationsExceeded",
+      "MaximumRuntimeExceeded",
+      "RunawayLoopDetected"
+    ]
+  },
+
+  "xray": {
+    "enabled": true,
+    "purpose": "Trace Plan -> Execute -> Observe -> Reflect workflow"
+  },
+
+  "iam": {
+    "principle": "least-privilege",
+    "permissions": {
+      "planner": [
+        "bedrock:InvokeModel"
+      ],
+      "executor": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "state_manager": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem"
+      ],
+      "checkpoint_manager": [
+        "s3:GetObject",
+        "s3:PutObject"
+      ]
+    }
+  },
+
+  "safety_limits": {
+    "max_iterations": 5,
+    "max_runtime_seconds": 60,
+    "max_estimated_cost_usd": 0.05,
+    "repeated_error_limit": 2,
+    "rollback_on_failure": true
+  }
+}
