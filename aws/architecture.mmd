@@ -1,0 +1,37 @@
+﻿flowchart TD
+
+    U[User Task] --> SF[AWS Step Functions]
+
+    SF --> P[Planner]
+    P --> B[Amazon Bedrock]
+
+    B --> E[ECS Fargate]
+    E --> S[Docker Sandbox]
+
+    S --> W[EFS Workspace]
+    S --> O[Observe Execution]
+
+    O --> R{Execution Successful?}
+
+    R -->|Yes| D[Task Complete]
+    R -->|No| A[Bedrock Error Analysis]
+
+    A --> F{Safe Fix Available?}
+
+    F -->|Yes| E
+    F -->|No| RB[Git Rollback]
+
+    SF --> DB[DynamoDB Task State]
+    E --> S3[S3 Checkpoints / Artifacts]
+
+    SF --> CW[CloudWatch Logs & Metrics]
+    SF --> XR[X-Ray Tracing]
+
+    IAM[IAM Least Privilege] -.-> SF
+    IAM -.-> E
+    IAM -.-> DB
+    IAM -.-> S3
+
+    G[Safety Manager] -.-> SF
+    G -.-> E
+    G -.-> RB
