@@ -196,5 +196,5 @@ if __name__ == "__main__":
 
 
 if __name__ == "__main__":
-    agent = ReActAgent(max_steps=5)
+    agent = ReActAgent(max_steps=1)
     agent.run("Fix the buggy program", "buggy.py")
