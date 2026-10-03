@@ -1,5 +1,6 @@
 ﻿from tools.tool_registry import ToolRegistry
 from tools.safety import SafetyManager
+from tools.git_manager import create_checkpoint, rollback
 
 
 class ReActAgent:
@@ -7,6 +8,7 @@ class ReActAgent:
         self.tools = ToolRegistry()
         self.safety = SafetyManager(max_steps=max_steps)
         self.history = []
+        self.checkpoint = None
 
     def plan(self, task):
         plan = [
@@ -128,9 +130,15 @@ if __name__ == "__main__":
         print("\nTASK:")
         print(task)
 
-        print("\nAVAILABLE TOOLS")
+        print("\nCREATING GIT CHECKPOINT")
         print("-" * 50)
-        self.tools.show_permissions()
+
+        try:
+            self.checkpoint = create_checkpoint()
+            print(f"Checkpoint: {self.checkpoint}")
+        except Exception as error:
+            print(f"Could not create checkpoint: {error}")
+            return
 
         self.plan(task)
 
@@ -141,6 +149,11 @@ if __name__ == "__main__":
                 step = self.safety.next_step()
             except RuntimeError as error:
                 print(f"\nHARD STOP: {error}")
+
+                if self.checkpoint:
+                    print("\nROLLING BACK TO CHECKPOINT")
+                    rollback(self.checkpoint)
+
                 break
 
             print("\n" + "=" * 60)
@@ -155,10 +168,16 @@ if __name__ == "__main__":
 
             if decision == "SUCCESS":
                 print("\nReAct loop completed successfully.")
+                print("Changes are preserved.")
                 break
 
             if decision == "STOP":
                 print("\nAgent stopped.")
+
+                if self.checkpoint:
+                    print("\nROLLING BACK TO CHECKPOINT")
+                    rollback(self.checkpoint)
+
                 break
 
             if decision == "FIX":
