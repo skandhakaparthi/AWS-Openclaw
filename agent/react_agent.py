@@ -1,11 +1,11 @@
-﻿from tools.filesystem import read_file, write_file
-from tools.executor import run_python_file
+﻿from tools.tool_registry import ToolRegistry
+from tools.safety import SafetyManager
 
 
 class ReActAgent:
-
     def __init__(self, max_steps=5):
-        self.max_steps = max_steps
+        self.tools = ToolRegistry()
+        self.safety = SafetyManager(max_steps=max_steps)
         self.history = []
 
     def plan(self, task):
@@ -41,13 +41,14 @@ class ReActAgent:
         })
 
     def observe(self, filename):
-        result = run_python_file(filename)
+        result = self.tools.run_python(filename)
 
         print("\nOBSERVE")
         print("-" * 50)
 
         if result["success"]:
             print("Execution successful.")
+
             if result["output"]:
                 print("Output:")
                 print(result["output"])
@@ -64,7 +65,6 @@ class ReActAgent:
         return result
 
     def reflect(self, result, filename):
-
         print("\nREFLECT")
         print("-" * 50)
 
@@ -83,10 +83,9 @@ class ReActAgent:
         print("Error detected.")
         print(error)
 
-        code = read_file(filename)
+        code = self.tools.read_file(filename)
 
         if "ZeroDivisionError" in error or "return a / b" in code:
-
             print("\nCorrection identified:")
             print("Add protection against division by zero.")
 
@@ -100,9 +99,9 @@ if __name__ == "__main__":
     print(divide(10, 0))
 '''
 
-            write_file(filename, fixed_code)
+            self.tools.write_file(filename, fixed_code)
 
-            print("Fix applied.")
+            print("Fix applied through Tool Registry.")
 
             self.history.append({
                 "phase": "REFLECT",
@@ -122,7 +121,6 @@ if __name__ == "__main__":
         return "STOP"
 
     def run(self, task, filename):
-
         print("=" * 60)
         print("CODEPILOT AI - ReAct CODING AGENT")
         print("=" * 60)
@@ -130,9 +128,20 @@ if __name__ == "__main__":
         print("\nTASK:")
         print(task)
 
+        print("\nAVAILABLE TOOLS")
+        print("-" * 50)
+        self.tools.show_permissions()
+
         self.plan(task)
 
-        for step in range(1, self.max_steps + 1):
+        self.safety.reset()
+
+        while True:
+            try:
+                step = self.safety.next_step()
+            except RuntimeError as error:
+                print(f"\nHARD STOP: {error}")
+                break
 
             print("\n" + "=" * 60)
             print(f"ITERATION {step}")
@@ -155,8 +164,9 @@ if __name__ == "__main__":
             if decision == "FIX":
                 print("\nReAct loop continuing...")
 
-        else:
-            print("\nHARD STOP: Maximum iterations reached.")
+        print("\nSAFETY STATUS")
+        print("-" * 50)
+        print(self.safety.status())
 
         print("\n" + "=" * 60)
         print("AGENT HISTORY")
@@ -167,10 +177,5 @@ if __name__ == "__main__":
 
 
 if __name__ == "__main__":
-
     agent = ReActAgent(max_steps=5)
-
-    agent.run(
-        "Fix the buggy program",
-        "buggy.py"
-    )
+    agent.run("Fix the buggy program", "buggy.py")
