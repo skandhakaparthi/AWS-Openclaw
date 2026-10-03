@@ -1,0 +1,39 @@
+﻿{
+  "name": "CodePilot-AI Sandbox",
+
+  "execution": {
+    "runtime": "Python 3.14",
+    "container": "Docker",
+    "network_access": false,
+    "read_only_root_filesystem": true,
+    "non_root_user": true,
+    "timeout_seconds": 10
+  },
+
+  "resource_limits": {
+    "cpu": "1",
+    "memory": "256m",
+    "pids": 64
+  },
+
+  "allowed_operations": [
+    "read_workspace",
+    "execute_python",
+    "capture_stdout",
+    "capture_stderr"
+  ],
+
+  "blocked_operations": [
+    "host_filesystem_access",
+    "network_access",
+    "privileged_container",
+    "host_process_access"
+  ],
+
+  "failure_policy": {
+    "timeout": "rollback",
+    "execution_error": "observe_and_analyze",
+    "unsafe_operation": "terminate",
+    "repeated_failure": "rollback"
+  }
+}
