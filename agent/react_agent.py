@@ -1,4 +1,7 @@
-﻿from agent.planner import TaskPlanner
+﻿import uuid
+
+from agent.planner import TaskPlanner
+from agent.state import TaskState
 from llm.client import LLMClient
 from tools.tool_registry import ToolRegistry
 from tools.safety import SafetyManager
@@ -11,8 +14,10 @@ class ReActAgent:
         self.planner = TaskPlanner(self.llm)
         self.tools = ToolRegistry()
         self.safety = SafetyManager(max_steps=max_steps)
+
         self.history = []
         self.checkpoint = None
+        self.task_state = None
 
     def plan(self, task):
         subtasks = self.planner.create_plan(task)
@@ -25,7 +30,7 @@ class ReActAgent:
 
         return subtasks
 
-    def act(self, action):
+    def act(self, action, iteration):
         print("\nACT")
         print("-" * 50)
         print(action)
@@ -35,7 +40,13 @@ class ReActAgent:
             "action": action
         })
 
-    def observe(self, filename):
+        self.task_state.record_iteration(
+            iteration,
+            "ACT",
+            action
+        )
+
+    def observe(self, filename, iteration):
         result = self.tools.run_python(filename)
 
         print("\nOBSERVE")
@@ -57,9 +68,15 @@ class ReActAgent:
             "result": result
         })
 
+        self.task_state.record_iteration(
+            iteration,
+            "OBSERVE",
+            result
+        )
+
         return result
 
-    def reflect(self, result, filename):
+    def reflect(self, result, filename, iteration):
         print("\nREFLECT")
         print("-" * 50)
 
@@ -70,6 +87,12 @@ class ReActAgent:
                 "phase": "REFLECT",
                 "decision": "SUCCESS"
             })
+
+            self.task_state.record_iteration(
+                iteration,
+                "REFLECT",
+                "SUCCESS"
+            )
 
             return "SUCCESS"
 
@@ -85,15 +108,26 @@ class ReActAgent:
         print("-" * 50)
         print(analysis)
 
+        self.task_state.record_iteration(
+            iteration,
+            "REFLECT",
+            analysis
+        )
+
         action = analysis.get("action")
 
         if action == "fix":
-            reason = analysis.get("reason", "LLM identified a safe correction")
+
+            reason = analysis.get(
+                "reason",
+                "LLM identified a safe correction"
+            )
 
             print("\nCorrection identified:")
             print(reason)
 
             if "ZeroDivisionError" in error:
+
                 fixed_code = '''def divide(a, b):
     if b == 0:
         return "Cannot divide by zero"
@@ -104,7 +138,10 @@ if __name__ == "__main__":
     print(divide(10, 0))
 '''
 
-                self.tools.write_file(filename, fixed_code)
+                self.tools.write_file(
+                    filename,
+                    fixed_code
+                )
 
                 print("Fix applied through Tool Registry.")
 
@@ -117,23 +154,37 @@ if __name__ == "__main__":
 
                 return "FIX"
 
-            print("LLM requested a fix, but no safe implementation is available.")
+            print(
+                "LLM requested a fix, "
+                "but no safe implementation is available."
+            )
 
         print("No safe automatic correction available.")
 
         self.history.append({
             "phase": "REFLECT",
             "decision": "STOP",
-            "reason": analysis.get("reason", "Unknown error"),
+            "reason": analysis.get(
+                "reason",
+                "Unknown error"
+            ),
             "llm_analysis": analysis
         })
 
         return "STOP"
 
     def run(self, task, filename):
+
+        task_id = "task-" + uuid.uuid4().hex[:8]
+
+        self.task_state = TaskState(task_id)
+
         print("=" * 60)
         print("CODEPILOT AI - AUTONOMOUS CODING AGENT")
         print("=" * 60)
+
+        print("\nTASK ID:")
+        print(task_id)
 
         print("\nLLM MODE:")
         print(self.llm.mode)
@@ -146,61 +197,156 @@ if __name__ == "__main__":
 
         try:
             self.checkpoint = create_checkpoint()
-            print(f"Checkpoint: {self.checkpoint}")
+
+            print(
+                f"Checkpoint: {self.checkpoint}"
+            )
+
         except Exception as error:
-            print(f"Could not create checkpoint: {error}")
+
+            print(
+                f"Could not create checkpoint: {error}"
+            )
+
+            self.task_state.set_status("FAILED")
+            self.task_state.save()
+
             return
 
         self.plan(task)
 
+        self.task_state.record_iteration(
+            0,
+            "PLAN",
+            self.history[-1]
+        )
+
         print("\nAVAILABLE TOOLS")
         print("-" * 50)
+
         self.tools.show_permissions()
 
         self.safety.reset()
 
         while True:
+
             try:
                 step = self.safety.next_step()
+
             except RuntimeError as error:
-                print(f"\nHARD STOP: {error}")
+
+                print(
+                    f"\nHARD STOP: {error}"
+                )
+
+                self.task_state.set_status(
+                    "ROLLED_BACK"
+                )
 
                 if self.checkpoint:
-                    print("\nROLLING BACK TO CHECKPOINT")
-                    rollback(self.checkpoint)
+
+                    print(
+                        "\nROLLING BACK TO CHECKPOINT"
+                    )
+
+                    rollback(
+                        self.checkpoint
+                    )
 
                 break
 
-            print("\n" + "=" * 60)
-            print(f"ITERATION {step}")
-            print("=" * 60)
+            print(
+                "\n" + "=" * 60
+            )
 
-            self.act("Execute target program")
+            print(
+                f"ITERATION {step}"
+            )
 
-            result = self.observe(filename)
+            print(
+                "=" * 60
+            )
 
-            decision = self.reflect(result, filename)
+            self.act(
+                "Execute target program",
+                step
+            )
+
+            result = self.observe(
+                filename,
+                step
+            )
+
+            decision = self.reflect(
+                result,
+                filename,
+                step
+            )
 
             if decision == "SUCCESS":
-                print("\nReAct loop completed successfully.")
-                print("Changes are preserved.")
+
+                print(
+                    "\nReAct loop completed successfully."
+                )
+
+                print(
+                    "Changes are preserved."
+                )
+
+                self.task_state.set_status(
+                    "SUCCESS"
+                )
+
                 break
 
             if decision == "STOP":
-                print("\nAgent stopped.")
+
+                print(
+                    "\nAgent stopped."
+                )
+
+                self.task_state.set_status(
+                    "ROLLED_BACK"
+                )
 
                 if self.checkpoint:
-                    print("\nROLLING BACK TO CHECKPOINT")
-                    rollback(self.checkpoint)
+
+                    print(
+                        "\nROLLING BACK TO CHECKPOINT"
+                    )
+
+                    rollback(
+                        self.checkpoint
+                    )
 
                 break
 
             if decision == "FIX":
-                print("\nReAct loop continuing...")
+
+                print(
+                    "\nReAct loop continuing..."
+                )
 
         print("\nSAFETY STATUS")
         print("-" * 50)
-        print(self.safety.status())
+
+        print(
+            self.safety.status()
+        )
+
+        print("\nSAVING TASK STATE")
+        print("-" * 50)
+
+        state_file = self.task_state.save()
+
+        print(
+            f"State saved to: {state_file}"
+        )
+
+        print("\nFINAL TASK STATE")
+        print("-" * 50)
+
+        self.task_state.show()
 
         print("\n" + "=" * 60)
         print("AGENT HISTORY")
@@ -211,5 +357,12 @@ if __name__ == "__main__":
 
 
 if __name__ == "__main__":
-    agent = ReActAgent(max_steps=5)
-    agent.run("Fix the buggy program", "buggy.py")
+
+    agent = ReActAgent(
+        max_steps=5
+    )
+
+    agent.run(
+        "Fix the buggy program",
+        "buggy.py"
+    )
