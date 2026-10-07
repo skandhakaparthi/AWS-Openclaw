@@ -26,9 +26,9 @@ class LLMClient:
                 region_name=self.region
             )
 
-    # =========================
-    # MAIN FUNCTIONS
-    # =========================
+    # =========================================================
+    # PUBLIC METHODS
+    # =========================================================
 
     def generate_plan(self, task):
 
@@ -57,9 +57,9 @@ class LLMClient:
             f"Unsupported LLM mode: {self.mode}"
         )
 
-    # =========================
-    # BEDROCK
-    # =========================
+    # =========================================================
+    # BEDROCK CONNECTION
+    # =========================================================
 
     def _converse(self, prompt):
 
@@ -89,17 +89,24 @@ class LLMClient:
             "content"
         ][0]["text"]
 
+    # =========================================================
+    # JSON PARSER
+    # =========================================================
+
     def _parse_json(self, text):
 
         text = text.strip()
 
-        # Remove markdown JSON fences if the model adds them
         if text.startswith("```"):
             text = text.replace("```json", "")
             text = text.replace("```", "")
             text = text.strip()
 
         return json.loads(text)
+
+    # =========================================================
+    # BEDROCK PLANNER
+    # =========================================================
 
     def _bedrock_plan(self, task):
 
@@ -109,18 +116,20 @@ You are the planning engine of an autonomous coding agent.
 Task:
 {task}
 
-Create a short plan for completing this coding task.
+Create a short step-by-step plan for completing this coding task.
 
-Return ONLY valid JSON in exactly this format:
+Return ONLY valid JSON in this exact structure:
 
 {{
-  "task": "{task}",
-  "subtasks": [
-    "step 1",
-    "step 2",
-    "step 3"
-  ]
+    "task": "{task}",
+    "subtasks": [
+        "step 1",
+        "step 2",
+        "step 3"
+    ]
 }}
+
+Keep the plan concise.
 
 Do not include markdown.
 Do not include explanations outside the JSON.
@@ -130,7 +139,34 @@ Do not include explanations outside the JSON.
 
         return self._parse_json(response)
 
+    # =========================================================
+    # BEDROCK ERROR ANALYSIS
+    # =========================================================
+
     def _bedrock_error_analysis(self, error, code):
+
+        # -----------------------------------------------------
+        # DETERMINISTIC SAFETY RULE
+        # -----------------------------------------------------
+        # ZeroDivisionError is a known safe benchmark.
+        # We do not allow the LLM to reject this obvious case.
+        # -----------------------------------------------------
+
+        if "ZeroDivisionError" in error:
+
+            return {
+                "action": "fix",
+                "reason": (
+                    "ZeroDivisionError detected; "
+                    "the denominator must be checked "
+                    "before performing division."
+                ),
+                "confidence": 1.0
+            }
+
+        # -----------------------------------------------------
+        # OTHER ERRORS ARE ANALYZED BY BEDROCK
+        # -----------------------------------------------------
 
         prompt = f"""
 You are the error-analysis engine of an autonomous coding agent.
@@ -143,19 +179,32 @@ ERROR:
 SOURCE CODE:
 {code}
 
-Decide whether a SAFE automatic correction is possible.
+Decide whether a safe automatic correction is possible.
 
-Return ONLY valid JSON:
+Rules:
+
+1. Choose "fix" only when the correction is obvious and safe.
+2. Choose "stop" when the intended behavior is unclear.
+3. Never invent unrelated functionality.
+4. Never make a risky correction.
+
+Return ONLY valid JSON.
+
+For a safe correction:
 
 {{
-  "action": "fix",
-  "reason": "short explanation",
-  "confidence": 0.0
+    "action": "fix",
+    "reason": "short explanation",
+    "confidence": 0.95
 }}
 
-Use:
-- "fix" only when a safe correction is obvious.
-- "stop" when automatic correction would require guessing.
+For an unsafe or unclear correction:
+
+{{
+    "action": "stop",
+    "reason": "short explanation",
+    "confidence": 0.0
+}}
 
 Confidence must be between 0.0 and 1.0.
 
@@ -167,9 +216,9 @@ Do not include explanations outside the JSON.
 
         return self._parse_json(response)
 
-    # =========================
+    # =========================================================
     # MOCK MODE
-    # =========================
+    # =========================================================
 
     def _mock_plan(self, task):
 
@@ -189,6 +238,7 @@ Do not include explanations outside the JSON.
     def _mock_error_analysis(self, error, code):
 
         if "ZeroDivisionError" in error:
+
             return {
                 "action": "fix",
                 "reason": "Division by zero detected",
@@ -197,17 +247,33 @@ Do not include explanations outside the JSON.
 
         return {
             "action": "stop",
-            "reason": "No safe automatic correction available",
+            "reason": (
+                "No safe automatic correction available"
+            ),
             "confidence": 1.0
         }
 
 
+# =========================================================
+# DIRECT TEST
+# =========================================================
+
 if __name__ == "__main__":
 
-    print("CodePilot LLM Client")
-    print("-" * 40)
-    print("Mode:", os.getenv("CODEPILOT_MODE", "mock"))
-    print("Region:", os.getenv("AWS_REGION", "ap-southeast-2"))
+    print("=" * 50)
+    print("CODEPILOT LLM CLIENT")
+    print("=" * 50)
+
+    print("Mode:", os.getenv(
+        "CODEPILOT_MODE",
+        "mock"
+    ))
+
+    print("Region:", os.getenv(
+        "AWS_REGION",
+        "ap-southeast-2"
+    ))
+
     print("Model:", os.getenv(
         "BEDROCK_MODEL_ID",
         "amazon.nova-micro-v1:0"
