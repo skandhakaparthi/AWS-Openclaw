@@ -4,15 +4,9 @@ import boto3
 
 
 class LLMClient:
-
     def __init__(self, mode=None):
         self.mode = mode or os.getenv("CODEPILOT_MODE", "mock")
-
-        self.region = os.getenv(
-            "AWS_REGION",
-            "ap-southeast-2"
-        )
-
+        self.region = os.getenv("AWS_REGION", "ap-southeast-2")
         self.model_id = os.getenv(
             "BEDROCK_MODEL_ID",
             "amazon.nova-micro-v1:0"
@@ -26,43 +20,29 @@ class LLMClient:
                 region_name=self.region
             )
 
-    # =========================================================
-    # PUBLIC METHODS
-    # =========================================================
-
     def generate_plan(self, task):
-
         if self.mode == "mock":
             return self._mock_plan(task)
 
         if self.mode == "bedrock":
             return self._bedrock_plan(task)
 
-        raise ValueError(
-            f"Unsupported LLM mode: {self.mode}"
-        )
+        raise ValueError(f"Unsupported LLM mode: {self.mode}")
 
     def analyze_error(self, error, code):
-
         if self.mode == "mock":
             return self._mock_error_analysis(error, code)
 
         if self.mode == "bedrock":
-            return self._bedrock_error_analysis(
-                error,
-                code
-            )
+            return self._bedrock_error_analysis(error, code)
 
-        raise ValueError(
-            f"Unsupported LLM mode: {self.mode}"
-        )
+        raise ValueError(f"Unsupported LLM mode: {self.mode}")
 
-    # =========================================================
-    # BEDROCK CONNECTION
-    # =========================================================
+    # ---------------------------------------------------------
+    # BEDROCK
+    # ---------------------------------------------------------
 
-    def _converse(self, prompt):
-
+    def _call_bedrock(self, prompt):
         response = self.client.converse(
             modelId=self.model_id,
             messages=[
@@ -81,147 +61,100 @@ class LLMClient:
             }
         )
 
-        return response[
-            "output"
-        ][
-            "message"
-        ][
-            "content"
-        ][0]["text"]
+        return response["output"]["message"]["content"][0]["text"]
 
-    # =========================================================
-    # JSON PARSER
-    # =========================================================
-
-    def _parse_json(self, text):
-
+    def _extract_json(self, text):
         text = text.strip()
 
         if text.startswith("```"):
-            text = text.replace("```json", "")
-            text = text.replace("```", "")
-            text = text.strip()
+            lines = text.splitlines()
 
-        return json.loads(text)
+            if lines[0].startswith("```"):
+                lines = lines[1:]
 
-    # =========================================================
-    # BEDROCK PLANNER
-    # =========================================================
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+
+            text = "\n".join(lines)
+
+        start = text.find("{")
+        end = text.rfind("}")
+
+        if start == -1 or end == -1:
+            raise ValueError(
+                f"Bedrock did not return valid JSON:\n{text}"
+            )
+
+        return json.loads(text[start:end + 1])
 
     def _bedrock_plan(self, task):
-
         prompt = f"""
-You are the planning engine of an autonomous coding agent.
+You are the planning engine of CodePilot-AI,
+an autonomous coding agent.
 
 Task:
 {task}
 
-Create a short step-by-step plan for completing this coding task.
+Create a safe step-by-step plan for solving this coding task.
 
-Return ONLY valid JSON in this exact structure:
+Return ONLY valid JSON in this exact format:
 
 {{
-    "task": "{task}",
-    "subtasks": [
-        "step 1",
-        "step 2",
-        "step 3"
-    ]
+  "task": "{task}",
+  "subtasks": [
+    "step 1",
+    "step 2",
+    "step 3"
+  ]
 }}
 
 Keep the plan concise.
-
 Do not include markdown.
-Do not include explanations outside the JSON.
 """
 
-        response = self._converse(prompt)
-
-        return self._parse_json(response)
-
-    # =========================================================
-    # BEDROCK ERROR ANALYSIS
-    # =========================================================
+        response = self._call_bedrock(prompt)
+        return self._extract_json(response)
 
     def _bedrock_error_analysis(self, error, code):
-
-        # -----------------------------------------------------
-        # DETERMINISTIC SAFETY RULE
-        # -----------------------------------------------------
-        # ZeroDivisionError is a known safe benchmark.
-        # We do not allow the LLM to reject this obvious case.
-        # -----------------------------------------------------
-
-        if "ZeroDivisionError" in error:
-
-            return {
-                "action": "fix",
-                "reason": (
-                    "ZeroDivisionError detected; "
-                    "the denominator must be checked "
-                    "before performing division."
-                ),
-                "confidence": 1.0
-            }
-
-        # -----------------------------------------------------
-        # OTHER ERRORS ARE ANALYZED BY BEDROCK
-        # -----------------------------------------------------
-
         prompt = f"""
-You are the error-analysis engine of an autonomous coding agent.
+You are the error-analysis engine of CodePilot-AI.
 
-Analyze the Python error and source code below.
+Analyze the following Python error.
 
 ERROR:
 {error}
 
-SOURCE CODE:
+CODE:
 {code}
 
-Decide whether a safe automatic correction is possible.
+Decide whether the error can be safely corrected automatically.
 
-Rules:
-
-1. Choose "fix" only when the correction is obvious and safe.
-2. Choose "stop" when the intended behavior is unclear.
-3. Never invent unrelated functionality.
-4. Never make a risky correction.
-
-Return ONLY valid JSON.
-
-For a safe correction:
+Return ONLY valid JSON in this exact format:
 
 {{
-    "action": "fix",
-    "reason": "short explanation",
-    "confidence": 0.95
+  "action": "fix",
+  "reason": "short explanation",
+  "confidence": 0.0
 }}
 
-For an unsafe or unclear correction:
+The action must be either:
+"fix"
+or
+"stop"
 
-{{
-    "action": "stop",
-    "reason": "short explanation",
-    "confidence": 0.0
-}}
-
-Confidence must be between 0.0 and 1.0.
+Use "stop" when automatic correction is uncertain or unsafe.
 
 Do not include markdown.
-Do not include explanations outside the JSON.
 """
 
-        response = self._converse(prompt)
+        response = self._call_bedrock(prompt)
+        return self._extract_json(response)
 
-        return self._parse_json(response)
-
-    # =========================================================
+    # ---------------------------------------------------------
     # MOCK MODE
-    # =========================================================
+    # ---------------------------------------------------------
 
     def _mock_plan(self, task):
-
         return {
             "task": task,
             "subtasks": [
@@ -236,9 +169,7 @@ Do not include explanations outside the JSON.
         }
 
     def _mock_error_analysis(self, error, code):
-
         if "ZeroDivisionError" in error:
-
             return {
                 "action": "fix",
                 "reason": "Division by zero detected",
@@ -247,34 +178,21 @@ Do not include explanations outside the JSON.
 
         return {
             "action": "stop",
-            "reason": (
-                "No safe automatic correction available"
-            ),
+            "reason": "No safe automatic correction available",
             "confidence": 1.0
         }
 
 
-# =========================================================
-# DIRECT TEST
-# =========================================================
-
 if __name__ == "__main__":
-
-    print("=" * 50)
     print("CODEPILOT LLM CLIENT")
     print("=" * 50)
 
-    print("Mode:", os.getenv(
-        "CODEPILOT_MODE",
-        "mock"
-    ))
-
-    print("Region:", os.getenv(
-        "AWS_REGION",
-        "ap-southeast-2"
-    ))
-
-    print("Model:", os.getenv(
-        "BEDROCK_MODEL_ID",
-        "amazon.nova-micro-v1:0"
-    ))
+    print("Mode:", os.getenv("CODEPILOT_MODE", "mock"))
+    print("Region:", os.getenv("AWS_REGION", "ap-southeast-2"))
+    print(
+        "Model:",
+        os.getenv(
+            "BEDROCK_MODEL_ID",
+            "amazon.nova-micro-v1:0"
+        )
+    )
