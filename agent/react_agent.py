@@ -96,7 +96,7 @@ class ReActAgent:
         print("\nREFLECT")
         print("-" * 50)
 
-        if result["success"]:
+        if result["success"] and "Cannot divide by zero" not in result.get("output", ""):
 
             print("Task appears complete.")
 
