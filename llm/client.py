@@ -168,19 +168,59 @@ Do not include markdown.
             ]
         }
 
+    
     def _mock_error_analysis(self, error, code):
-        if "ZeroDivisionError" in error:
+        error_text = error.lower()
+        code_text = code.lower()
+
+        if "zerodivisionerror" in error_text:
             return {
                 "action": "fix",
                 "reason": "Division by zero detected",
                 "confidence": 1.0
             }
 
+        if "nameerror" in error_text:
+            return {
+                "action": "stop",
+                "reason": (
+                    "Undefined name detected. "
+                    "Automatic correction requires identifying "
+                    "the intended variable or import."
+                ),
+                "confidence": 0.95
+            }
+
+        if "syntaxerror" in error_text:
+            return {
+                "action": "stop",
+                "reason": (
+                    "Syntax error detected. "
+                    "The source needs inspection before correction."
+                ),
+                "confidence": 0.95
+            }
+
+        if "typeerror" in error_text:
+            return {
+                "action": "stop",
+                "reason": (
+                    "Type error detected. "
+                    "The expected types and intended behavior "
+                    "must be established before editing."
+                ),
+                "confidence": 0.95
+            }
+
         return {
             "action": "stop",
-            "reason": "No safe automatic correction available",
+            "reason": (
+                "Unrecognized or insufficiently understood error. "
+                "Stopping to avoid an unsafe automatic correction."
+            ),
             "confidence": 1.0
         }
+
 
 
 if __name__ == "__main__":
