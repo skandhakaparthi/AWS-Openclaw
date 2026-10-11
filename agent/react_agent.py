@@ -483,5 +483,5 @@ if __name__ == "__main__":
 
     agent.run(
         "Fix the buggy program",
-        "buggy.py"
+        "repair_test.py"
     )
