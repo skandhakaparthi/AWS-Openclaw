@@ -183,6 +183,7 @@ class ReActAgent:
                 })
                 return "STOP"
 
+
             try:
                 ast.parse(fixed_code)
             except SyntaxError as exc:
@@ -194,24 +195,22 @@ class ReActAgent:
                 })
                 return "STOP"
 
+            self.tools.write_file(
+                filename,
+                fixed_code
+            )
 
-                self.tools.write_file(
-                    filename,
-                    fixed_code
-                )
+            print("Fix applied through Tool Registry.")
 
-                print("Fix applied through Tool Registry.")
+            self.history.append({
+                "phase": "REFLECT",
+                "decision": "FIX",
+                "reason": reason,
+                "llm_analysis": analysis
+            })
 
-                self.history.append({
-                    "phase": "REFLECT",
-                    "decision": "FIX",
-                    "reason": reason,
-                    "llm_analysis": analysis
-                })
+            return "FIX"
 
-                return "FIX"
-
-            print("No safe implementation available for this fix.")
 
         print("No safe automatic correction available.")
 
