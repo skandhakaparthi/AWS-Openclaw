@@ -115,13 +115,33 @@ class ReActAgent:
             )
 
             return "SUCCESS"
-
         error = result.get("error", "")
-        code = self.tools.read_file(filename)
 
         print("Error detected:")
         print(error)
 
+        # Enforce the sandbox timeout policy directly.
+        if result.get("return_code") == -1 and "timed out" in error.lower():
+            print("Timeout detected. Stopping for rollback.")
+
+            self.history.append({
+                "phase": "REFLECT",
+                "decision": "STOP",
+                "reason": "Execution timeout; rollback required"
+            })
+
+            self.task_state.record_iteration(
+                iteration,
+                "REFLECT",
+                {
+                    "decision": "STOP",
+                    "reason": "Execution timeout; rollback required"
+                }
+            )
+
+            return "STOP"
+
+        code = self.tools.read_file(filename)
         self.safety.record_error(error)
 
         analysis = self.llm.analyze_error(
