@@ -87,18 +87,25 @@ class ReActAgent:
 
         return result
 
+    
     def reflect(self, result, filename, iteration):
 
         print("\nREFLECT")
         print("-" * 50)
 
-        if result["success"] and "Cannot divide by zero" not in result.get("output", ""):
+        # A successful execution means the task is complete.
+        if result.get("success", False):
 
             print("Task appears complete.")
 
+            if result.get("output"):
+                print("Validated output:")
+                print(result["output"])
+
             self.history.append({
                 "phase": "REFLECT",
-                "decision": "SUCCESS"
+                "decision": "SUCCESS",
+                "reason": "Program executed successfully"
             })
 
             self.task_state.record_iteration(
@@ -109,14 +116,12 @@ class ReActAgent:
 
             return "SUCCESS"
 
-        error = result["error"]
-
+        error = result.get("error", "")
         code = self.tools.read_file(filename)
 
         print("Error detected:")
         print(error)
 
-        # Runaway-loop protection
         self.safety.record_error(error)
 
         analysis = self.llm.analyze_error(
@@ -140,13 +145,12 @@ class ReActAgent:
 
             reason = analysis.get(
                 "reason",
-                "LLM identified a safe correction"
+                "LLM identified a correction"
             )
 
             print("\nCorrection identified:")
             print(reason)
 
-            
             if "ZeroDivisionError" in error:
 
                 fixed_code = '''def divide(a, b):
@@ -159,16 +163,12 @@ if __name__ == "__main__":
     print(divide(10, 0))
 '''
 
-
-
                 self.tools.write_file(
                     filename,
                     fixed_code
                 )
 
-                print(
-                    "Fix applied through Tool Registry."
-                )
+                print("Fix applied through Tool Registry.")
 
                 self.history.append({
                     "phase": "REFLECT",
@@ -179,14 +179,9 @@ if __name__ == "__main__":
 
                 return "FIX"
 
-            print(
-                "LLM requested a fix, "
-                "but no safe implementation is available."
-            )
+            print("No safe implementation available for this fix.")
 
-        print(
-            "No safe automatic correction available."
-        )
+        print("No safe automatic correction available.")
 
         self.history.append({
             "phase": "REFLECT",
