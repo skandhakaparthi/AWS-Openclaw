@@ -150,6 +150,7 @@ class ReActAgent:
             print("\nCorrection identified:")
             print(reason)
 
+            
             if "ZeroDivisionError" in error:
 
                 fixed_code = '''def divide(a, b):
@@ -161,6 +162,8 @@ class ReActAgent:
 if __name__ == "__main__":
     print(divide(10, 0))
 '''
+
+
 
                 self.tools.write_file(
                     filename,
