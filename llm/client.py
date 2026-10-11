@@ -38,6 +38,15 @@ class LLMClient:
 
         raise ValueError(f"Unsupported LLM mode: {self.mode}")
 
+    def generate_fix(self, error, code):
+        if self.mode == "mock":
+            return self._mock_generate_fix(error, code)
+
+        if self.mode == "bedrock":
+            return self._bedrock_generate_fix(error, code)
+
+        raise ValueError(f"Unsupported LLM mode: {self.mode}")
+
     # ---------------------------------------------------------
     # BEDROCK
     # ---------------------------------------------------------
@@ -56,7 +65,7 @@ class LLMClient:
                 }
             ],
             inferenceConfig={
-                "maxTokens": 500,
+                "maxTokens": 2000,
                 "temperature": 0
             }
         )
@@ -153,6 +162,56 @@ Do not include markdown.
     # ---------------------------------------------------------
     # MOCK MODE
     # ---------------------------------------------------------
+
+    def _bedrock_generate_fix(self, error, code):
+        prompt = f"""
+You are the code-repair engine of CodePilot-AI.
+
+Repair the Python program using the reported error.
+
+ERROR:
+{error}
+
+CURRENT SOURCE CODE:
+{code}
+
+Requirements:
+- Return the complete corrected Python source code only.
+- Preserve the intended behavior.
+- Make the smallest safe correction possible.
+- Do not add unrelated features or Markdown.
+- If a safe correction cannot be determined, return exactly:
+CANNOT_FIX
+"""
+        response = self._call_bedrock(prompt).strip()
+
+        if response.startswith("```"):
+            lines = response.splitlines()
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            response = "\n".join(lines).strip()
+
+        if response == "CANNOT_FIX" or not response:
+            return None
+
+        return response
+
+    def _mock_generate_fix(self, error, code):
+        if "zerodivisionerror" not in error.lower():
+            return None
+
+        if "return a / b" not in code:
+            return None
+
+        fixed_code = code.replace(
+            "return a / b",
+            'if b == 0:\n        return "Cannot divide by zero"\n    return a / b',
+            1
+        )
+
+        return fixed_code if fixed_code != code else None
 
     def _mock_plan(self, task):
         return {

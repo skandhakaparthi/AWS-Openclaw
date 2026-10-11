@@ -1,5 +1,5 @@
 ﻿import uuid
-
+import ast
 from agent.planner import TaskPlanner
 from agent.state import TaskState
 from llm.client import LLMClient
@@ -171,17 +171,29 @@ class ReActAgent:
             print("\nCorrection identified:")
             print(reason)
 
-            if "ZeroDivisionError" in error:
+            
+            fixed_code = self.llm.generate_fix(error, code)
 
-                fixed_code = '''def divide(a, b):
-    if b == 0:
-        return "Cannot divide by zero"
-    return a / b
+            if not fixed_code:
+                print("No safe fix was generated.")
+                self.history.append({
+                    "phase": "REFLECT",
+                    "decision": "STOP",
+                    "reason": "No fix generated"
+                })
+                return "STOP"
 
+            try:
+                ast.parse(fixed_code)
+            except SyntaxError as exc:
+                print(f"Generated fix has invalid syntax: {exc}")
+                self.history.append({
+                    "phase": "REFLECT",
+                    "decision": "STOP",
+                    "reason": "Generated code failed syntax validation"
+                })
+                return "STOP"
 
-if __name__ == "__main__":
-    print(divide(10, 0))
-'''
 
                 self.tools.write_file(
                     filename,
