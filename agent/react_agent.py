@@ -63,7 +63,7 @@ class ReActAgent:
         print("\nOBSERVE")
         print("-" * 50)
 
-        if result["success"]:
+        if result["success"] and "Cannot divide by zero" not in result.get("output", ""):
 
             print("Execution successful.")
 
