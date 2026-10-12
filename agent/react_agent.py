@@ -6,7 +6,7 @@ from tools.executor import PROJECT_ROOT
 from agent.task_workspace import TaskWorkspaceManager
 from agent.planner import TaskPlanner
 from agent.state import TaskState
-from llm.client import LLMClient
+from llm.client import LLMClient, LLMProviderError
 from tools.tool_registry import ToolRegistry
 from tools.safety import SafetyManager
 from tools.filesystem import WORKSPACE
@@ -40,7 +40,6 @@ class ReActAgent:
 
         self.history.append({
             "phase": "PLAN",
-            "task": task,
             "subtasks": subtasks
         })
 
@@ -73,13 +72,14 @@ class ReActAgent:
         if result["success"]:
             print("Execution successful.")
 
-            if result["output"]:
+            if result["output"] and self.llm.mode != "bedrock":
                 print("Output:")
                 print(result["output"])
         else:
             print("Execution failed.")
-            print("Error:")
-            print(result["error"])
+            if self.llm.mode != "bedrock":
+                print("Error:")
+                print(result["error"])
 
         self.history.append({
             "phase": "OBSERVE",
@@ -140,7 +140,7 @@ class ReActAgent:
 
             print("Task appears complete.")
 
-            if result.get("output"):
+            if result.get("output") and self.llm.mode != "bedrock":
                 print("Validated output:")
                 print(result["output"])
 
@@ -164,8 +164,9 @@ class ReActAgent:
             self.task_state.record_iteration(iteration, "REFLECT", {"decision": classification, "error": error})
             return classification
 
-        print("Error detected:")
-        print(error)
+        print("Error detected; details omitted from logs." if self.llm.mode == "bedrock" else "Error detected:")
+        if self.llm.mode != "bedrock":
+            print(error)
 
         # Enforce the sandbox timeout policy directly.
         if result.get("return_code") == -1 and "timed out" in error.lower():
@@ -203,14 +204,14 @@ class ReActAgent:
             self.task_state.state["error_classification"] = "REPEATED_ERROR"
             return "MAX_ITERATIONS"
 
-        analysis = self.llm.analyze_error(
-            error,
-            code
-        )
+        try:
+            analysis = self.llm.analyze_error(error, code)
+        except LLMProviderError as provider_error:
+            return self._record_provider_failure(provider_error, iteration)
 
         print("\nLLM ERROR ANALYSIS")
         print("-" * 50)
-        print(analysis)
+        print("Structured analysis received.")
 
         self.task_state.record_iteration(
             iteration,
@@ -227,11 +228,15 @@ class ReActAgent:
                 "LLM identified a correction"
             )
 
-            print("\nCorrection identified:")
-            print(reason)
+            print("\nCorrection identified; details omitted from logs." if self.llm.mode == "bedrock" else "\nCorrection identified:")
+            if self.llm.mode != "bedrock":
+                print(reason)
 
             
-            fixed_code = self.llm.generate_fix(error, code)
+            try:
+                fixed_code = self.llm.generate_fix(error, code)
+            except LLMProviderError as provider_error:
+                return self._record_provider_failure(provider_error, iteration)
 
             if not fixed_code:
                 print("No safe fix was generated.")
@@ -293,6 +298,23 @@ class ReActAgent:
         })
 
         return "STOP"
+
+    def _record_provider_failure(self, error, iteration):
+        self.task_state.state["error_classification"] = "PROVIDER_ERROR"
+        self.task_state.state["provider_error"] = {
+            "kind": error.kind,
+            "message": str(error),
+        }
+        self.history.append({
+            "phase": "LLM_PROVIDER",
+            "decision": "STOP",
+            "kind": error.kind,
+            "message": str(error),
+        })
+        self.task_state.record_iteration(iteration, "LLM_PROVIDER", {
+            "decision": "STOP", "kind": error.kind, "message": str(error),
+        })
+        return "PROVIDER_ERROR"
 
     def rollback_task_changes(self):
         """Restore only agent-written files, refusing to overwrite later edits."""
@@ -385,13 +407,29 @@ class ReActAgent:
         print(self.llm.mode)
 
         print("\nTASK:")
-        print(task)
+        print("Task content omitted from logs.")
 
         print("\nTASK WORKSPACE")
         print("-" * 50)
         print(self.requested_workspace)
 
-        self.plan(task)
+        try:
+            self.plan(task)
+        except LLMProviderError as provider_error:
+            self._record_provider_failure(provider_error, 0)
+            self.task_state.set_status("FAILED")
+            self.task_state.state["final_summary"] = {
+                "status": "FAILED",
+                "error_classification": "PROVIDER_ERROR",
+                "provider_error": self.task_state.state["provider_error"],
+                "files_modified": [],
+                "estimated_model_cost_usd": None,
+                "cost_limit_enforced": False,
+                "model_usage": self.llm.usage_summary(),
+                "workspace": str(self.requested_workspace),
+            }
+            self.task_state.save()
+            return self.task_state.state["final_summary"]
         self.task_state.state["plan"] = self.history[-1]["subtasks"]
 
         self.task_state.record_iteration(
@@ -579,7 +617,7 @@ class ReActAgent:
         if (self.task_state.state["status"] == "FAILED" and
                 self.task_state.state.get("error_classification") in {
                     "RUNTIME_ERROR", "ASSERTION_FAILURE", "SYNTAX_ERROR",
-                    "CODE_ERROR", "REPEATED_ERROR", "MAX_ITERATIONS"
+                    "CODE_ERROR", "REPEATED_ERROR", "MAX_ITERATIONS", "PROVIDER_ERROR"
                 }):
             rollback_result = self.rollback_task_changes()
             self.task_state.state["rollback_result"] = rollback_result
@@ -596,6 +634,7 @@ class ReActAgent:
             "rollback_result": self.task_state.state.get("rollback_result"),
             "estimated_model_cost_usd": None,
             "cost_limit_enforced": False,
+            "model_usage": self.llm.usage_summary(),
             "workspace": str(self.requested_workspace),
         }
         state_file = self.task_state.save()
@@ -607,14 +646,20 @@ class ReActAgent:
         print("\nFINAL TASK STATE")
         print("-" * 50)
 
-        self.task_state.show()
+        if self.llm.mode == "bedrock":
+            print(f"Status: {self.task_state.state['status']}; details saved without prompt text.")
+        else:
+            self.task_state.show()
 
         print("\n" + "=" * 60)
         print("AGENT HISTORY")
         print("=" * 60)
 
-        for item in self.history:
-            print(item)
+        if self.llm.mode == "bedrock":
+            print(f"Recorded {len(self.history)} agent events; details omitted from logs.")
+        else:
+            for item in self.history:
+                print(item)
 
         return self.task_state.state["final_summary"]
 

@@ -2,11 +2,13 @@ import unittest
 import tempfile
 import contextlib
 import io
+import json
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 from agent.react_agent import ReActAgent
 from agent.state import TaskState
+from llm.client import LLMProviderError, LLMThrottlingError
 from tools.filesystem import WORKSPACE
 from tools.tool_registry import ToolRegistry
 
@@ -37,6 +39,38 @@ class TestReflection(unittest.TestCase):
         self.assertEqual(decision, "INFRA_ERROR")
         self.agent.llm.analyze_error.assert_not_called()
         self.agent.tools.read_file.assert_not_called()
+
+    def test_bedrock_provider_failure_does_not_trigger_code_repair(self):
+        self.agent.tools.read_file.return_value = "raise RuntimeError('bug')\n"
+        self.agent.llm.analyze_error.side_effect = LLMThrottlingError("Bedrock throttled the request.")
+        decision = self.agent.reflect(
+            {"success": False, "return_code": 1, "error": "RuntimeError: bug",
+             "execution_mode": "docker-sandbox"}, "a.py", 1)
+        self.assertEqual(decision, "PROVIDER_ERROR")
+        self.assertEqual(self.agent.task_state.state["error_classification"], "PROVIDER_ERROR")
+        self.agent.llm.generate_fix.assert_not_called()
+        self.agent.tools.write_file.assert_not_called()
+
+    def test_plan_provider_failure_is_reported_without_logging_prompt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            secret_prompt = "PRIVATE_PROMPT_SHOULD_NOT_APPEAR"
+            llm = Mock()
+            llm.mode = "bedrock"
+            llm.usage_summary.return_value = {"request_count": 1}
+            agent = ReActAgent(workspace=workspace, llm_client=llm, state_dir=root / "state")
+            output = io.StringIO()
+            with patch.object(agent.planner, "create_plan", side_effect=LLMProviderError("Bedrock unavailable.")), \
+                    contextlib.redirect_stdout(output):
+                summary = agent.run(secret_prompt, "main.py")
+            self.assertEqual(summary["error_classification"], "PROVIDER_ERROR")
+            self.assertNotIn(secret_prompt, output.getvalue())
+            self.assertEqual(agent.task_state.state["original_request"], None)
+            self.assertEqual(agent.task_state.state["request_metadata"]["character_count"], len(secret_prompt))
+            stored = json.loads((root / "state" / f"{agent.task_state.task_id}.json").read_text(encoding="utf-8"))
+            self.assertNotIn(secret_prompt, json.dumps(stored))
 
     def test_missing_image_stops_without_repair(self):
         decision = self.agent.reflect(

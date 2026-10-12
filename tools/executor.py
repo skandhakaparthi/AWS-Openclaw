@@ -1,7 +1,6 @@
 import os
 import shutil
 import subprocess
-import sys
 import uuid
 from pathlib import Path
 
@@ -16,15 +15,8 @@ WORKSPACE = (PROJECT_ROOT / "workspace").resolve()
 SANDBOX_IMAGE = "codepilot-sandbox"
 SANDBOX_TIMEOUT_SECONDS = 10
 
-# CODEPILOT_EXECUTION_MODE values:
-#   docker            -> sandbox REQUIRED (default). Fail closed: if Docker
-#                        or the image is unavailable, nothing is executed.
-#   local-unsandboxed -> explicit development opt-in; results are clearly
-#                        labeled UNSANDBOXED. Never selected automatically.
-# Any other value (including the legacy "auto" and "local" modes) is
-# rejected without executing anything.
+# CODEPILOT_EXECUTION_MODE is Docker-only. Every other value is rejected.
 MODE_DOCKER = "docker"
-MODE_LOCAL_UNSANDBOXED = "local-unsandboxed"
 DEFAULT_MODE = MODE_DOCKER
 
 
@@ -75,7 +67,7 @@ def resolve_mode():
     mode = os.getenv("CODEPILOT_EXECUTION_MODE", DEFAULT_MODE)
     mode = (mode or DEFAULT_MODE).strip().lower()
 
-    if mode in (MODE_DOCKER, MODE_LOCAL_UNSANDBOXED):
+    if mode == MODE_DOCKER:
         return mode
 
     return None
@@ -85,7 +77,7 @@ def safe_workspace_relative(filename, workspace=None):
     """Return the POSIX-style path of filename inside workspace, or None.
 
     Rejects empty names, absolute paths and any traversal outside the
-    workspace, so neither the sandbox nor UNSANDBOXED local mode can reach
+    workspace, so the executor cannot reach
     host files such as ~/.aws, ~/.ssh or the Docker socket.
     """
     if not filename or not isinstance(filename, str):
@@ -258,70 +250,6 @@ def run_docker(filename, timeout=SANDBOX_TIMEOUT_SECONDS, workspace=None):
         raise
 
 
-def run_local(filename, timeout=SANDBOX_TIMEOUT_SECONDS, workspace=None):
-    """UNSANDBOXED local development execution (explicit opt-in only).
-
-    This is NOT a security sandbox. It runs only when the operator has
-    explicitly set CODEPILOT_EXECUTION_MODE=local-unsandboxed, and every
-    result is labeled UNSANDBOXED.
-    """
-    root = Path(workspace).resolve() if workspace is not None else WORKSPACE
-    relative = safe_workspace_relative(filename, root)
-
-    if relative is None:
-        return _not_executed(
-            "path-rejected",
-            f"Rejected '{filename}': path must stay inside the workspace.",
-        )
-
-    print("=" * 60)
-    print("WARNING: UNSANDBOXED LOCAL EXECUTION (development opt-in)")
-    print("This is NOT a security sandbox.")
-    print("=" * 60)
-
-    command = [sys.executable, str(root / relative)]
-
-    try:
-
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=timeout
-        )
-
-        return {
-            "success": result.returncode == 0,
-            "output": result.stdout,
-            "error": result.stderr,
-            "return_code": result.returncode,
-            "execution_mode": "UNSANDBOXED-local",
-            "timed_out": False,
-        }
-
-    except subprocess.TimeoutExpired:
-
-        return {
-            "success": False,
-            "output": "",
-            "error": f"Execution timed out after {timeout} seconds.",
-            "return_code": -1,
-            "execution_mode": "UNSANDBOXED-local",
-            "timed_out": True,
-        }
-
-    except Exception as error:
-
-        return {
-            "success": False,
-            "output": "",
-            "error": f"UNSANDBOXED local execution failed: {error}",
-            "return_code": -2,
-            "execution_mode": "UNSANDBOXED-local",
-            "timed_out": False,
-        }
-
-
 def run_python_file(filename, workspace=None):
     """
     Execute a Python file for the coding agent.
@@ -330,9 +258,7 @@ def run_python_file(filename, workspace=None):
     - Default mode is "docker": the sandbox is REQUIRED. If Docker or the
       sandbox image is unavailable, nothing is executed and a clear error
       is returned. There is no local fallback.
-    - Local execution only happens with the explicit opt-in
-      CODEPILOT_EXECUTION_MODE=local-unsandboxed, and results are labeled
-      UNSANDBOXED.
+    - Local execution is not implemented. Any non-Docker mode is rejected.
     - The mode comes from the environment only, so callers (including the
       agent's tool registry) cannot bypass the sandbox by picking another
       tool or argument.
@@ -344,8 +270,7 @@ def run_python_file(filename, workspace=None):
         return _not_executed(
             "mode-rejected",
             f"Rejected CODEPILOT_EXECUTION_MODE='{raw}'. Valid modes: "
-            f"'{MODE_DOCKER}' (default, sandbox required) and "
-            f"'{MODE_LOCAL_UNSANDBOXED}' (explicit UNSANDBOXED opt-in). "
+            f"'{MODE_DOCKER}' (the only supported mode). "
             "No code was executed.",
         )
 
@@ -354,10 +279,7 @@ def run_python_file(filename, workspace=None):
             return _not_executed(
                 "docker-unavailable",
                 "Sandbox-required mode: Docker is unavailable. "
-                "No code was executed. Start Docker Desktop or, for "
-                "development only, explicitly set "
-                f"CODEPILOT_EXECUTION_MODE={MODE_LOCAL_UNSANDBOXED} "
-                "(UNSANDBOXED).",
+                "No code was executed. Start Docker Desktop. No local fallback is available.",
             )
 
         if not sandbox_image_available():
@@ -370,8 +292,7 @@ def run_python_file(filename, workspace=None):
 
         return run_docker(filename, workspace=workspace)
 
-    # mode == MODE_LOCAL_UNSANDBOXED (explicit opt-in only)
-    return run_local(filename, workspace=workspace)
+    return _not_executed("mode-rejected", "Only Docker execution is supported.")
 
 
 if __name__ == "__main__":
@@ -386,8 +307,4 @@ if __name__ == "__main__":
         f"{'YES' if sandbox_image_available() else 'NO'}"
     )
     print("Default mode: docker (fail-closed, no local fallback)")
-    print(
-        "Local execution requires explicit opt-in: "
-        "CODEPILOT_EXECUTION_MODE=local-unsandboxed"
-    )
-    print("Local execution is labeled: UNSANDBOXED")
+    print("Local execution fallback: disabled")

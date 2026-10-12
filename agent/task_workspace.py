@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import tempfile
+import stat
 from pathlib import Path
 
 
@@ -19,11 +20,19 @@ def _digest(data: bytes | None):
 
 
 def _safe_relative(root: Path, relative: str):
-    if not isinstance(relative, str) or not relative:
+    if (not isinstance(relative, str) or not relative or "\\" in relative
+            or relative.startswith("/") or any(part in ("", ".", "..") for part in relative.split("/"))):
         raise ValueError("A non-empty relative file path is required.")
-    candidate = (root / relative).resolve()
+    root = root.resolve()
+    candidate = root.joinpath(*relative.split("/"))
+    # Do not resolve through links: a symlink at any existing component is unsafe.
+    cursor = root
+    for part in relative.split("/"):
+        cursor = cursor / part
+        if cursor.is_symlink():
+            raise ValueError("Symbolic links are not eligible for promotion.")
     try:
-        candidate.relative_to(root.resolve())
+        candidate.relative_to(root)
     except ValueError as exc:
         raise ValueError("Path escapes its assigned workspace.") from exc
     return candidate
@@ -150,30 +159,146 @@ class TaskWorkspaceManager:
         except ValueError as exc:
             raise ValueError("Artifact path is outside the artifact root.") from exc
         manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+        if not isinstance(manifest, dict) or not isinstance(manifest.get("files"), list):
+            raise ValueError("Invalid promotion manifest.")
+        artifact_dir = manifest_file.parent
+        if manifest.get("task_id") != artifact_dir.name:
+            raise ValueError("Manifest task ID does not match its artifact directory.")
+        patch_file = artifact_dir / "changes.patch"
+        if patch_file.is_symlink() or not patch_file.is_file():
+            raise ValueError("Review patch is missing or unsafe.")
+        if manifest.get("patch_path") != str(patch_file):
+            raise ValueError("Review patch path does not match the artifact directory.")
+        if not isinstance(manifest.get("modified_files"), list):
+            raise ValueError("Invalid modified file list.")
         conflicts = []
         destinations = []
+        seen = set()
         for entry in manifest.get("files", []):
+            if not isinstance(entry, dict):
+                raise ValueError("Invalid promotion file entry.")
             relative = entry.get("path")
             destination = _safe_relative(self.primary_workspace, relative)
+            if relative in seen:
+                raise ValueError("Duplicate path in promotion manifest.")
+            seen.add(relative)
+            if destination.exists() and not destination.is_file():
+                raise ValueError(f"Destination is not a regular file: {relative}")
             current = destination.read_bytes() if destination.is_file() else None
             if _digest(current) != entry.get("base_sha256"):
                 conflicts.append(relative)
             if entry.get("deleted"):
                 raise ValueError("Deletion patches require a separate reviewed workflow.")
-            destinations.append((destination, entry.get("new_content")))
+            content = entry.get("new_content")
+            if not isinstance(content, str) or _digest(content.encode("utf-8")) != entry.get("task_sha256"):
+                raise ValueError(f"Invalid content digest for {relative}.")
+            destinations.append((relative, destination, content, current,
+                                 destination.stat() if destination.exists() else None))
+        if sorted(seen) != sorted(manifest["modified_files"]):
+            raise ValueError("Manifest file list does not match its entries.")
         if conflicts:
-            return {"applied": False, "conflicts": sorted(conflicts)}
-        for destination, content in destinations:
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            fd, temp_name = tempfile.mkstemp(prefix=".codepilot-", dir=destination.parent)
+            result = {"applied": False, "status": "CONFLICT", "conflicts": sorted(conflicts),
+                      "recovery_errors": []}
+            receipt = artifact_dir / "promotion_result.json"
             try:
-                with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
-                    stream.write(content)
-                os.replace(temp_name, destination)
-            finally:
-                if os.path.exists(temp_name):
-                    os.unlink(temp_name)
-        return {"applied": True, "files": [str(path) for path, _ in destinations]}
+                receipt.write_text(json.dumps(result, indent=2), encoding="utf-8")
+                result["record_path"] = str(receipt)
+            except OSError as exc:
+                result["record_error"] = str(exc)
+            return result
+
+        receipt = manifest_file.parent / "promotion_result.json"
+        def record(result):
+            result = dict(result)
+            result["record_path"] = str(receipt)
+            try:
+                receipt.write_text(json.dumps(result, indent=2), encoding="utf-8")
+            except OSError as exc:
+                result["record_error"] = str(exc)
+            return result
+
+        # Stage every replacement before touching destination files. Recheck each
+        # baseline immediately before replace; rollback only files still containing
+        # our staged bytes so concurrent edits are never overwritten.
+        staged = []
+        created_dirs = []
+        applied = []
+        attempting = None
+        try:
+            for relative, destination, content, old, old_stat in destinations:
+                missing = []
+                parent = destination.parent
+                while not parent.exists():
+                    missing.append(parent)
+                    parent = parent.parent
+                for directory in reversed(missing):
+                    directory.mkdir()
+                    created_dirs.append(directory)
+                fd, name = tempfile.mkstemp(prefix=".codepilot-stage-", dir=destination.parent)
+                staged_path = Path(name)
+                new_digest = _digest(content.encode("utf-8"))
+                item = (relative, destination, staged_path, old, old_stat, new_digest)
+                staged.append(item)
+                with os.fdopen(fd, "wb") as stream:
+                    stream.write(content.encode("utf-8"))
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                if old_stat is not None:
+                    os.chmod(staged_path, stat.S_IMODE(old_stat.st_mode))
+
+            for relative, destination, staged_path, old, old_stat, new_digest in staged:
+                current = destination.read_bytes() if destination.is_file() else None
+                if _digest(current) != _digest(old):
+                    raise RuntimeError(f"Destination changed after validation: {relative}")
+                attempting = (relative, destination, old, old_stat, new_digest)
+                os.replace(staged_path, destination)
+                applied.append((relative, destination, old, old_stat, new_digest))
+                attempting = None
+        except Exception as exc:
+            recovery_errors = []
+            recovered = []
+            # Include a replace which raised after changing its destination.
+            if attempting is not None:
+                relative, destination, old, old_stat, new_digest = attempting
+                current = destination.read_bytes() if destination.is_file() else None
+                if _digest(current) == new_digest and all(item[1] != destination for item in applied):
+                    applied.append(attempting)
+            for relative, destination, old, old_stat, new_digest in reversed(applied):
+                try:
+                    current = destination.read_bytes() if destination.is_file() else None
+                    if _digest(current) != new_digest:
+                        raise RuntimeError("Destination changed during recovery; preserving concurrent edit.")
+                    if old is None:
+                        destination.unlink()
+                    else:
+                        fd, name = tempfile.mkstemp(prefix=".codepilot-recover-", dir=destination.parent)
+                        with os.fdopen(fd, "wb") as stream:
+                            stream.write(old)
+                            stream.flush()
+                            os.fsync(stream.fileno())
+                        if old_stat is not None:
+                            os.chmod(name, stat.S_IMODE(old_stat.st_mode))
+                            os.utime(name, ns=(old_stat.st_atime_ns, old_stat.st_mtime_ns))
+                        os.replace(name, destination)
+                    recovered.append(relative)
+                except Exception as recovery_exc:
+                    recovery_errors.append(f"{relative}: {recovery_exc}")
+            for path in staged:
+                try:
+                    path[2].unlink(missing_ok=True)
+                except OSError:
+                    pass
+            for directory in reversed(created_dirs):
+                try:
+                    directory.rmdir()
+                except OSError:
+                    pass
+            status = "FAILED_RECOVERED" if not recovery_errors else "RECOVERY_FAILED"
+            return record({"applied": False, "status": status, "error": str(exc),
+                           "recovered_files": sorted(recovered), "recovery_errors": recovery_errors})
+
+        return record({"applied": True, "status": "APPLIED",
+                       "files": [str(path[1]) for path in staged], "recovery_errors": []})
 
     def cleanup(self):
         if self.task_root is None:

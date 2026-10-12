@@ -2,7 +2,6 @@ import contextlib
 import inspect
 import os
 import subprocess
-import sys
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -75,7 +74,7 @@ class TestFailClosedModes(unittest.TestCase):
         run.assert_not_called()
 
     def test_legacy_and_unknown_modes_fail_closed(self):
-        for bad in ("auto", "local", "banana"):
+        for bad in ("auto", "local", "local-unsandboxed", "banana"):
             with self.subTest(mode=bad), execution_mode(bad), \
                     patch.object(executor.subprocess, "run") as run:
                 result = executor.run_python_file("factorial.py")
@@ -86,20 +85,12 @@ class TestFailClosedModes(unittest.TestCase):
             self.assertIn("No code was executed", result["error"])
             run.assert_not_called()
 
-    def test_local_execution_requires_explicit_opt_in_and_is_labeled(self):
+    def test_local_unsandboxed_mode_is_rejected_without_host_execution(self):
         with execution_mode("local-unsandboxed"), \
-                patch.object(executor.subprocess, "run",
-                             return_value=ok_result(0, stdout="hi\n")) as run:
+                patch.object(executor.subprocess, "run") as run:
             result = executor.run_python_file("factorial.py")
-
-        self.assertTrue(result["success"])
-        self.assertIn("UNSANDBOXED", result["execution_mode"])
-        command = run.call_args.args[0]
-        self.assertEqual(command[0], sys.executable)
-        # No docker involved in local mode.
-        self.assertFalse(
-            any("docker" in str(call) for call in run.call_args_list)
-        )
+        self.assertEqual(result["execution_mode"], "mode-rejected")
+        run.assert_not_called()
 
     def test_path_traversal_rejected_before_any_execution(self):
         for evil in ("../secrets.env", "..\\..\\x.py", "/etc/passwd",

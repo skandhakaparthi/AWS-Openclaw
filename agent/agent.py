@@ -134,7 +134,7 @@ if __name__ == "__main__":
         print("🤖 CODEPILOT AI")
         print("=" * 50)
 
-        print(f"\nTASK:\n{task}")
+        print("\nTASK: content omitted from logs")
 
         self.show_workspace()
 

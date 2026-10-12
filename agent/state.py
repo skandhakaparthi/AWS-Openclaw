@@ -1,4 +1,5 @@
-﻿import json
+import json
+import hashlib
 from pathlib import Path
 from datetime import datetime
 
@@ -15,7 +16,11 @@ class TaskState:
             "iterations": 0,
             "estimated_cost": None,
             "cost_measurement_available": False,
-            "original_request": original_request,
+            "original_request": None,
+            "request_metadata": ({
+                "sha256": hashlib.sha256(original_request.encode("utf-8", errors="replace")).hexdigest(),
+                "character_count": len(original_request),
+            } if isinstance(original_request, str) else None),
             "plan": [],
             "current_step": 0,
             "files_inspected": [],

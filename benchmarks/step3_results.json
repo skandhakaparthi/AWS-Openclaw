@@ -11,7 +11,7 @@
       "elapsed_seconds": 0.738,
       "execution_result": {
         "success": true,
-        "output": "120\n",
+        "output": "120\r\n",
         "error": "",
         "return_code": 0,
         "execution_mode": "docker-sandbox",
@@ -26,7 +26,7 @@
         ],
         "execution_result": {
           "success": true,
-          "output": "120\n",
+          "output": "120\r\n",
           "error": "",
           "return_code": 0,
           "execution_mode": "docker-sandbox",
@@ -59,7 +59,7 @@
       "elapsed_seconds": 1.967,
       "execution_result": {
         "success": true,
-        "output": "Cannot divide by zero\n",
+        "output": "Cannot divide by zero\r\n",
         "error": "",
         "return_code": 0,
         "execution_mode": "docker-sandbox",
@@ -76,7 +76,7 @@
         ],
         "execution_result": {
           "success": true,
-          "output": "Cannot divide by zero\n",
+          "output": "Cannot divide by zero\r\n",
           "error": "",
           "return_code": 0,
           "execution_mode": "docker-sandbox",
@@ -112,7 +112,7 @@
       "execution_result": {
         "success": false,
         "output": "",
-        "error": "Traceback (most recent call last):\n  File \"/workspace/unknown_variable.py\", line 5, in <module>\n    print(calculate())\n          ~~~~~~~~~^^\n  File \"/workspace/unknown_variable.py\", line 2, in calculate\n    return total + 10\n           ^^^^^\nNameError: name 'total' is not defined\n",
+        "error": "Traceback (most recent call last):\r\n  File \"/workspace/unknown_variable.py\", line 5, in <module>\r\n    print(calculate())\r\n          ~~~~~~~~~^^\r\n  File \"/workspace/unknown_variable.py\", line 2, in calculate\r\n    return total + 10\r\n           ^^^^^\r\nNameError: name 'total' is not defined\r\n",
         "return_code": 1,
         "execution_mode": "docker-sandbox",
         "timed_out": false
@@ -127,7 +127,7 @@
         "execution_result": {
           "success": false,
           "output": "",
-          "error": "Traceback (most recent call last):\n  File \"/workspace/unknown_variable.py\", line 5, in <module>\n    print(calculate())\n          ~~~~~~~~~^^\n  File \"/workspace/unknown_variable.py\", line 2, in calculate\n    return total + 10\n           ^^^^^\nNameError: name 'total' is not defined\n",
+          "error": "Traceback (most recent call last):\r\n  File \"/workspace/unknown_variable.py\", line 5, in <module>\r\n    print(calculate())\r\n          ~~~~~~~~~^^\r\n  File \"/workspace/unknown_variable.py\", line 2, in calculate\r\n    return total + 10\r\n           ^^^^^\r\nNameError: name 'total' is not defined\r\n",
           "return_code": 1,
           "execution_mode": "docker-sandbox",
           "timed_out": false
@@ -171,7 +171,7 @@
       "execution_result": {
         "success": false,
         "output": "",
-        "error": "Traceback (most recent call last):\n  File \"/workspace/repair_loop_temp.py\", line 5, in <module>\n    print(divide(10, 0))\n          ~~~~~~^^^^^^^\n  File \"/workspace/repair_loop_temp.py\", line 2, in divide\n    return a / b\n           ~~^~~\nZeroDivisionError: division by zero\n",
+        "error": "Traceback (most recent call last):\r\n  File \"/workspace/repair_loop_temp.py\", line 5, in <module>\r\n    print(divide(10, 0))\r\n          ~~~~~~^^^^^^^\r\n  File \"/workspace/repair_loop_temp.py\", line 2, in divide\r\n    return a / b\r\n           ~~^~~\r\nZeroDivisionError: division by zero\r\n",
         "return_code": 1,
         "execution_mode": "docker-sandbox",
         "timed_out": false
@@ -188,7 +188,7 @@
         "execution_result": {
           "success": false,
           "output": "",
-          "error": "Traceback (most recent call last):\n  File \"/workspace/repair_loop_temp.py\", line 5, in <module>\n    print(divide(10, 0))\n          ~~~~~~^^^^^^^\n  File \"/workspace/repair_loop_temp.py\", line 2, in divide\n    return a / b\n           ~~^~~\nZeroDivisionError: division by zero\n",
+          "error": "Traceback (most recent call last):\r\n  File \"/workspace/repair_loop_temp.py\", line 5, in <module>\r\n    print(divide(10, 0))\r\n          ~~~~~~^^^^^^^\r\n  File \"/workspace/repair_loop_temp.py\", line 2, in divide\r\n    return a / b\r\n           ~~^~~\r\nZeroDivisionError: division by zero\r\n",
           "return_code": 1,
           "execution_mode": "docker-sandbox",
           "timed_out": false

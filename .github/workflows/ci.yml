@@ -1,0 +1,160 @@
+name: CodePilot-AI CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Unit tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install pinned project dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Check Python syntax and critical lint errors
+        run: |
+          python -m compileall -q agent llm tools benchmarks tests
+          python -m pip install --disable-pip-version-check ruff==0.17.0
+          ruff check --select E9,F63,F7,F82 agent llm tools benchmarks tests
+
+      - name: Run complete test suite
+        run: |
+          mkdir -p reports
+          python -m pytest tests -q -p no:cacheprovider --junitxml=reports/junit-${{ matrix.python-version }}.xml
+
+      - name: Upload unit test report
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: unit-test-report-python-${{ matrix.python-version }}
+          path: reports/junit-${{ matrix.python-version }}.xml
+          if-no-files-found: ignore
+          retention-days: 14
+
+  security:
+    name: Dependency and secret scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out full history for secret scanning
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Audit pinned Python dependencies
+        run: |
+          python -m pip install --disable-pip-version-check pip-audit==2.10.1
+          pip-audit --requirement requirements.txt
+
+      - name: Scan repository history for secrets
+        env:
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          set -euo pipefail
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          release="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          mkdir -p /tmp/codepilot-gitleaks
+          curl --fail --location --silent --show-error "$release/$archive" --output "/tmp/codepilot-gitleaks/$archive"
+          curl --fail --location --silent --show-error "$release/gitleaks_${GITLEAKS_VERSION}_checksums.txt" --output /tmp/gitleaks-checksums.txt
+          grep "  ${archive}$" /tmp/gitleaks-checksums.txt | (cd /tmp/codepilot-gitleaks && sha256sum --check --status)
+          tar -xzf "/tmp/codepilot-gitleaks/$archive" -C /tmp/codepilot-gitleaks gitleaks
+          /tmp/codepilot-gitleaks/gitleaks git --redact --no-banner
+
+  docker-benchmarks:
+    name: Docker sandbox benchmarks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CODEPILOT_EXECUTION_MODE: docker
+    steps:
+      - name: Check out source
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Install pinned project dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Verify Docker daemon
+        run: |
+          docker --version
+          docker info
+
+      - name: Build hardened sandbox image
+        run: docker build --file sandbox/Dockerfile --tag codepilot-sandbox .
+
+      - name: Run BENCH-001 through BENCH-004 in Docker
+        run: python benchmarks/runner.py --output benchmarks/ci_step7_results.json
+
+      - name: Verify all benchmark acceptance checks
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          result = json.loads(Path("benchmarks/ci_step7_results.json").read_text(encoding="utf-8"))
+          expected = {"BENCH-001", "BENCH-002", "BENCH-003", "BENCH-004"}
+          scenarios = result.get("results", [])
+          assert {item.get("id") for item in scenarios} == expected, "Scenario set is incomplete"
+          assert result.get("passed") == 4, "All four benchmarks must pass"
+          assert result.get("failed") == result.get("blocked") == result.get("timed_out") == 0
+          for item in scenarios:
+              assert item.get("status") == "PASSED", item.get("id")
+              assert item.get("execution_result", {}).get("execution_mode") == "docker-sandbox"
+              assert item.get("temporary_workspace_discarded") is True
+              assert all(item.get("acceptance_checks", {}).values()), item.get("id")
+          PY
+
+      - name: Remove any remaining benchmark containers
+        if: always()
+        run: |
+          containers="$(docker ps -aq --filter 'name=^/codepilot-')"
+          if [ -n "$containers" ]; then
+            printf '%s\n' "$containers" | xargs -r docker rm -f
+          fi
+          test -z "$(docker ps -aq --filter 'name=^/codepilot-')"
+
+      - name: Upload Docker benchmark report
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: docker-benchmark-results
+          path: benchmarks/ci_step7_results.json
+          if-no-files-found: ignore
+          retention-days: 14

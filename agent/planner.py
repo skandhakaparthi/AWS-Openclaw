@@ -12,10 +12,7 @@ class TaskPlanner:
         result = self.llm.generate_plan(task)
         subtasks = result["subtasks"]
 
-        print(f"Task: {task}\n")
-
-        for number, subtask in enumerate(subtasks, 1):
-            print(f"Subtask {number}: {subtask}")
+        print(f"Task content omitted from logs; planned {len(subtasks)} steps.\n")
 
         return subtasks
 
