@@ -1,43 +1,29 @@
-﻿{
-  "Comment": "CodePilot-AI Autonomous Coding Agent - Plan Execute Observe Loop",
+
+{
+  "Comment": "CodePilot-AI Autonomous Coding Workflow",
   "StartAt": "Plan",
   "States": {
     "Plan": {
       "Type": "Task",
-      "Resource": "arn:aws:lambda:REGION:ACCOUNT_ID:function:codepilot-planner",
+      "Resource": "arn:aws:lambda:ap-southeast-2:399527676637:function:codepilot-planner",
       "Next": "Execute"
     },
-
     "Execute": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::ecs:runTask.sync",
+      "Type": "Pass",
       "Parameters": {
-        "LaunchType": "FARGATE",
-        "Cluster": "codepilot-cluster",
-        "TaskDefinition": "codepilot-executor",
-        "Overrides": {
-          "ContainerOverrides": [
-            {
-              "Name": "codepilot-executor",
-              "Environment": [
-                {
-                  "Name": "TASK_ID",
-                  "Value.$": "$.task_id"
-                }
-              ]
-            }
-          ]
-        }
+        "task_id.$": "$.task_id",
+        "task.$": "$.task",
+        "iteration.$": "$.iteration",
+        "success": false,
+        "error": "ECS executor integration is pending"
       },
       "Next": "Observe"
     },
-
     "Observe": {
       "Type": "Task",
-      "Resource": "arn:aws:lambda:REGION:ACCOUNT_ID:function:codepilot-observer",
+      "Resource": "arn:aws:lambda:ap-southeast-2:399527676637:function:codepilot-observer",
       "Next": "CheckResult"
     },
-
     "CheckResult": {
       "Type": "Choice",
       "Choices": [
@@ -54,13 +40,11 @@
       ],
       "Default": "AnalyzeError"
     },
-
     "AnalyzeError": {
       "Type": "Task",
-      "Resource": "arn:aws:lambda:REGION:ACCOUNT_ID:function:codepilot-error-analyzer",
+      "Resource": "arn:aws:lambda:ap-southeast-2:399527676637:function:codepilot-error-analyzer",
       "Next": "CheckCorrection"
     },
-
     "CheckCorrection": {
       "Type": "Choice",
       "Choices": [
@@ -72,17 +56,14 @@
       ],
       "Default": "Rollback"
     },
-
     "Rollback": {
       "Type": "Task",
-      "Resource": "arn:aws:lambda:REGION:ACCOUNT_ID:function:codepilot-rollback",
+      "Resource": "arn:aws:lambda:ap-southeast-2:399527676637:function:codepilot-rollback",
       "Next": "Failed"
     },
-
     "Success": {
       "Type": "Succeed"
     },
-
     "Failed": {
       "Type": "Fail",
       "Error": "CodePilotTaskFailed",

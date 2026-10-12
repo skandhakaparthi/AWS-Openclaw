@@ -1,0 +1,32 @@
+{
+  "cpu": "512",
+  "executionRoleArn": "arn:aws:iam::399527676637:role/ecsTaskExecutionRole",
+  "memory": "1024",
+  "family": "codepilot-executor",
+  "networkMode": "awsvpc",
+  "taskRoleArn": "arn:aws:iam::399527676637:role/ecsTaskExecutionRole",
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "containerDefinitions": [
+    {
+      "image": "399527676637.dkr.ecr.ap-southeast-2.amazonaws.com/codepilot-ai:latest",
+      "name": "codepilot-executor",
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-stream-prefix": "ecs",
+          "awslogs-region": "ap-southeast-2",
+          "awslogs-create-group": "true",
+          "awslogs-group": "/ecs/codepilot-executor"
+        }
+      },
+      "essential": true,
+      "command": [
+        "python",
+        "-c",
+        "print('CodePilot ECS executor ready')"
+      ]
+    }
+  ]
+}
