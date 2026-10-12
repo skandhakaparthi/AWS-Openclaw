@@ -1,20 +1,24 @@
 ﻿import uuid
 import ast
+import hashlib
+import shutil
+from pathlib import Path
 from agent.planner import TaskPlanner
 from agent.state import TaskState
 from llm.client import LLMClient
 from tools.tool_registry import ToolRegistry
 from tools.safety import SafetyManager
-from tools.git_manager import create_checkpoint, rollback
+from tools.filesystem import WORKSPACE
 
 
 class ReActAgent:
 
-    def __init__(self, max_steps=5):
+    def __init__(self, max_steps=5, workspace=None, llm_client=None):
 
-        self.llm = LLMClient()
+        self.llm = llm_client or LLMClient()
         self.planner = TaskPlanner(self.llm)
-        self.tools = ToolRegistry()
+        self.requested_workspace = Path(workspace).resolve() if workspace else None
+        self.tools = ToolRegistry(workspace=self.requested_workspace)
 
         self.safety = SafetyManager(
             max_steps=max_steps,
@@ -24,7 +28,6 @@ class ReActAgent:
         )
 
         self.history = []
-        self.checkpoint = None
         self.task_state = None
 
     def plan(self, task):
@@ -84,6 +87,8 @@ class ReActAgent:
             "OBSERVE",
             result
         )
+        self.task_state.state["latest_execution_result"] = result
+        self.task_state.state["tool_invocations"].append({"tool": "run_python", "filename": filename})
 
         return result
 
@@ -93,8 +98,41 @@ class ReActAgent:
         print("\nREFLECT")
         print("-" * 50)
 
-        # A successful execution means the task is complete.
-        if result.get("success", False):
+        if not isinstance(result, dict):
+            result = {"success": False, "error": "Missing execution result", "execution_mode": "unknown"}
+        error = str(result.get("error") or "")
+        mode = str(result.get("execution_mode") or "")
+        return_code = int(result.get("return_code", -2))
+        if result.get("timed_out") or return_code == -1:
+            classification = "TIMEOUT"
+        elif mode in {"docker-unavailable", "image-missing", "docker-error"}:
+            classification = "INFRA_ERROR"
+        elif mode in {"mode-rejected", "path-rejected"}:
+            classification = "PERMISSION_ERROR"
+        elif result.get("success") is True and return_code == 0:
+            classification = "SUCCESS"
+        elif return_code == -2:
+            classification = "INFRA_ERROR"
+        elif "syntaxerror" in error.lower():
+            classification = "SYNTAX_ERROR"
+        elif "assertionerror" in error.lower():
+            classification = "ASSERTION_FAILURE"
+        elif any(token in error.lower() for token in ("error", "exception")):
+            classification = "RUNTIME_ERROR"
+        else:
+            classification = "CODE_ERROR"
+        self.task_state.state["error_classification"] = classification
+        self.task_state.state["latest_execution_result"] = result
+        if classification != "SUCCESS":
+            self.task_state.state["latest_test_result"] = {
+                "verified": False, "return_code": return_code, "error": error
+            }
+
+        if classification == "SUCCESS":
+            self.task_state.state["latest_test_result"] = {
+                "verified": True, "return_code": 0,
+                "output": result.get("output", "")
+            }
 
             print("Task appears complete.")
 
@@ -105,29 +143,34 @@ class ReActAgent:
             self.history.append({
                 "phase": "REFLECT",
                 "decision": "SUCCESS",
-                "reason": "Program executed successfully"
+                "reason": "Executed acceptance check exited with code 0",
+                "acceptance_check": {"verified": True, "return_code": 0}
             })
 
             self.task_state.record_iteration(
                 iteration,
                 "REFLECT",
-                "SUCCESS"
+                {"decision": "SUCCESS", "acceptance_check": {"verified": True, "return_code": 0}}
             )
 
             return "SUCCESS"
-        error = result.get("error", "")
+        if classification in {"INFRA_ERROR", "PERMISSION_ERROR", "TIMEOUT"}:
+            self.task_state.state["latest_test_result"] = {"verified": False, "reason": classification}
+            self.history.append({"phase": "REFLECT", "decision": classification, "error": error})
+            self.task_state.record_iteration(iteration, "REFLECT", {"decision": classification, "error": error})
+            return classification
 
         print("Error detected:")
         print(error)
 
         # Enforce the sandbox timeout policy directly.
         if result.get("return_code") == -1 and "timed out" in error.lower():
-            print("Timeout detected. Stopping for rollback.")
+            print("Timeout detected. Stopping safely.")
 
             self.history.append({
                 "phase": "REFLECT",
                 "decision": "STOP",
-                "reason": "Execution timeout; rollback required"
+                "reason": "Execution timeout; task stopped"
             })
 
             self.task_state.record_iteration(
@@ -135,14 +178,26 @@ class ReActAgent:
                 "REFLECT",
                 {
                     "decision": "STOP",
-                    "reason": "Execution timeout; rollback required"
+                    "reason": "Execution timeout; task stopped"
                 }
             )
 
             return "STOP"
 
-        code = self.tools.read_file(filename)
-        self.safety.record_error(error)
+        source = self.tools.read_file(filename)
+        if str(source).startswith("ERROR:"):
+            self.task_state.state["error_classification"] = "PERMISSION_ERROR"
+            return "PERMISSION_ERROR"
+        self.task_state.state["previous_error_signatures"].append(
+            hashlib.sha256(error.strip().encode("utf-8", errors="replace")).hexdigest()
+        )
+        code = source
+        self.task_state.state["files_inspected"].append(filename)
+        try:
+            self.safety.record_error(error)
+        except RuntimeError:
+            self.task_state.state["error_classification"] = "REPEATED_ERROR"
+            return "MAX_ITERATIONS"
 
         analysis = self.llm.analyze_error(
             error,
@@ -195,10 +250,17 @@ class ReActAgent:
                 })
                 return "STOP"
 
-            self.tools.write_file(
+            write_result = self.tools.write_file(
                 filename,
                 fixed_code
             )
+            verified_source = self.tools.read_file(filename)
+            if (isinstance(write_result, str) and write_result.startswith("ERROR:")) or verified_source != fixed_code:
+                self.task_state.state["error_classification"] = "PERMISSION_ERROR"
+                return "PERMISSION_ERROR"
+            if filename not in self.task_state.state["files_changed"]:
+                self.task_state.state["files_changed"].append(filename)
+            self.task_state.state["tool_invocations"].append({"tool": "write_file", "filename": filename})
 
             print("Fix applied through Tool Registry.")
 
@@ -226,36 +288,19 @@ class ReActAgent:
 
         return "STOP"
 
-    def rollback_to_checkpoint(self):
-
-        if self.checkpoint:
-
-            print(
-                "\nROLLING BACK TO CHECKPOINT"
-            )
-            print("-" * 50)
-
-            try:
-
-                rollback(
-                    self.checkpoint
-                )
-
-                print(
-                    "Rollback completed successfully."
-                )
-
-            except Exception as error:
-
-                print(
-                    f"Rollback failed: {error}"
-                )
-
     def run(self, task, filename):
 
         task_id = "task-" + uuid.uuid4().hex[:8]
 
-        self.task_state = TaskState(task_id)
+        if self.requested_workspace is None:
+            isolated = Path(".agent_tasks") / task_id / "workspace"
+            isolated.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(WORKSPACE, isolated)
+            self.requested_workspace = isolated.resolve()
+            self.tools = ToolRegistry(workspace=self.requested_workspace)
+        self.task_state = TaskState(task_id, original_request=task)
+        self.task_state.state["workspace"] = str(self.requested_workspace)
+        self.safety.reset()
 
         print("=" * 60)
         print(
@@ -272,32 +317,12 @@ class ReActAgent:
         print("\nTASK:")
         print(task)
 
-        print("\nCREATING GIT CHECKPOINT")
+        print("\nTASK WORKSPACE")
         print("-" * 50)
-
-        try:
-
-            self.checkpoint = create_checkpoint()
-
-            print(
-                f"Checkpoint: {self.checkpoint}"
-            )
-
-        except Exception as error:
-
-            print(
-                f"Could not create checkpoint: {error}"
-            )
-
-            self.task_state.set_status(
-                "FAILED"
-            )
-
-            self.task_state.save()
-
-            return
+        print(self.requested_workspace)
 
         self.plan(task)
+        self.task_state.state["plan"] = self.history[-1]["subtasks"]
 
         self.task_state.record_iteration(
             0,
@@ -310,8 +335,6 @@ class ReActAgent:
 
         self.tools.show_permissions()
 
-        self.safety.reset()
-
         print("\nSAFETY LIMITS")
         print("-" * 50)
 
@@ -320,10 +343,7 @@ class ReActAgent:
             f"{self.safety.max_steps}"
         )
 
-        print(
-            f"Maximum estimated cost: "
-            f"${self.safety.max_cost:.4f}"
-        )
+        print("Maximum estimated cost: unmeasured (provider usage data unavailable)")
 
         print(
             f"Maximum runtime: "
@@ -362,21 +382,15 @@ class ReActAgent:
                     filename,
                     step
                 )
-
-                # Mock mode has zero cost.
-                # Bedrock integration can later provide
-                # a real estimated cost here.
-                self.safety.add_cost(0.00)
-
-                self.task_state.add_cost(
-                    0.00
-                )
+                self.task_state.state["latest_execution_result"] = result
+                self.safety.check_runtime()
 
                 decision = self.reflect(
                     result,
                     filename,
                     step
                 )
+                self.safety.check_runtime()
 
                 if decision == "SUCCESS":
 
@@ -394,17 +408,13 @@ class ReActAgent:
 
                     break
 
-                if decision == "STOP":
+                if decision not in {"FIX", "SUCCESS"}:
 
                     print(
                         "\nAgent stopped."
                     )
 
-                    self.task_state.set_status(
-                        "ROLLED_BACK"
-                    )
-
-                    self.rollback_to_checkpoint()
+                    self.task_state.set_status("FAILED")
 
                     break
 
@@ -415,6 +425,14 @@ class ReActAgent:
                     )
 
             except RuntimeError as error:
+
+                message = str(error)
+                if "iteration limit" in message.lower():
+                    self.task_state.state["error_classification"] = "MAX_ITERATIONS"
+                elif "runtime limit" in message.lower():
+                    self.task_state.state["error_classification"] = "TIMEOUT"
+                elif "cost limit" in message.lower():
+                    self.task_state.state["error_classification"] = "BUDGET_EXHAUSTED"
 
                 print(
                     "\nSAFETY STOP"
@@ -438,12 +456,17 @@ class ReActAgent:
                     str(error)
                 )
 
-                self.task_state.set_status(
-                    "ROLLED_BACK"
+                self.task_state.set_status("FAILED")
+
+                break
+
+            except PermissionError as error:
+
+                self.task_state.state["error_classification"] = "PERMISSION_ERROR"
+                self.task_state.record_iteration(
+                    self.safety.current_step, "PERMISSION", str(error)
                 )
-
-                self.rollback_to_checkpoint()
-
+                self.task_state.set_status("FAILED")
                 break
 
             except Exception as error:
@@ -469,11 +492,7 @@ class ReActAgent:
                     str(error)
                 )
 
-                self.task_state.set_status(
-                    "ROLLED_BACK"
-                )
-
-                self.rollback_to_checkpoint()
+                self.task_state.set_status("FAILED")
 
                 break
 
@@ -487,6 +506,16 @@ class ReActAgent:
         print("\nSAVING TASK STATE")
         print("-" * 50)
 
+        self.task_state.state["final_summary"] = {
+            "status": self.task_state.state["status"],
+            "files_modified": self.task_state.state.get("files_changed", []),
+            "tests_executed": [filename],
+            "execution_result": self.task_state.state.get("latest_execution_result"),
+            "rollback_occurred": False,
+            "estimated_model_cost_usd": None,
+            "cost_limit_enforced": False,
+            "workspace": str(self.requested_workspace),
+        }
         state_file = self.task_state.save()
 
         print(
@@ -504,6 +533,8 @@ class ReActAgent:
 
         for item in self.history:
             print(item)
+
+        return self.task_state.state["final_summary"]
 
 
 if __name__ == "__main__":

@@ -81,7 +81,7 @@ def resolve_mode():
     return None
 
 
-def safe_workspace_relative(filename):
+def safe_workspace_relative(filename, workspace=None):
     """Return the POSIX-style path of filename inside workspace, or None.
 
     Rejects empty names, absolute paths and any traversal outside the
@@ -92,8 +92,9 @@ def safe_workspace_relative(filename):
         return None
 
     try:
-        resolved = (WORKSPACE / filename).resolve()
-        relative = resolved.relative_to(WORKSPACE)
+        root = Path(workspace).resolve() if workspace is not None else WORKSPACE
+        resolved = (root / filename).resolve()
+        relative = resolved.relative_to(root)
     except (ValueError, OSError, RuntimeError):
         return None
 
@@ -130,7 +131,7 @@ def remove_container(container_name):
         pass
 
 
-def build_docker_command(filename, container_name):
+def build_docker_command(filename, container_name, workspace=None):
     """Build the hardened `docker run` command for a workspace file.
 
     Security properties enforced here:
@@ -146,7 +147,8 @@ def build_docker_command(filename, container_name):
     - --rm so the container is removed on every exit path
     - --pull never so a missing image can never be pulled from a registry
     """
-    relative = safe_workspace_relative(filename)
+    root = Path(workspace).resolve() if workspace is not None else WORKSPACE
+    relative = safe_workspace_relative(filename, root)
 
     if relative is None:
         raise ValueError(
@@ -154,7 +156,7 @@ def build_docker_command(filename, container_name):
         )
 
     # Docker Desktop on Windows accepts forward-slash host paths.
-    host_workspace = str(WORKSPACE).replace("\\", "/")
+    host_workspace = str(root).replace("\\", "/")
 
     return [
         "docker", "run",
@@ -190,13 +192,13 @@ def build_docker_command(filename, container_name):
     ]
 
 
-def run_docker(filename, timeout=SANDBOX_TIMEOUT_SECONDS):
+def run_docker(filename, timeout=SANDBOX_TIMEOUT_SECONDS, workspace=None):
     """Execute code inside the Docker sandbox (fail closed, no fallback)."""
 
     container_name = "codepilot-" + uuid.uuid4().hex[:12]
 
     try:
-        command = build_docker_command(filename, container_name)
+        command = build_docker_command(filename, container_name, workspace)
     except ValueError as error:
         return _not_executed("path-rejected", str(error))
 
@@ -247,14 +249,15 @@ def run_docker(filename, timeout=SANDBOX_TIMEOUT_SECONDS):
         }
 
 
-def run_local(filename, timeout=SANDBOX_TIMEOUT_SECONDS):
+def run_local(filename, timeout=SANDBOX_TIMEOUT_SECONDS, workspace=None):
     """UNSANDBOXED local development execution (explicit opt-in only).
 
     This is NOT a security sandbox. It runs only when the operator has
     explicitly set CODEPILOT_EXECUTION_MODE=local-unsandboxed, and every
     result is labeled UNSANDBOXED.
     """
-    relative = safe_workspace_relative(filename)
+    root = Path(workspace).resolve() if workspace is not None else WORKSPACE
+    relative = safe_workspace_relative(filename, root)
 
     if relative is None:
         return _not_executed(
@@ -267,7 +270,7 @@ def run_local(filename, timeout=SANDBOX_TIMEOUT_SECONDS):
     print("This is NOT a security sandbox.")
     print("=" * 60)
 
-    command = [sys.executable, str(WORKSPACE / relative)]
+    command = [sys.executable, str(root / relative)]
 
     try:
 
@@ -310,7 +313,7 @@ def run_local(filename, timeout=SANDBOX_TIMEOUT_SECONDS):
         }
 
 
-def run_python_file(filename):
+def run_python_file(filename, workspace=None):
     """
     Execute a Python file for the coding agent.
 
@@ -356,10 +359,10 @@ def run_python_file(filename):
                 f"docker build -f sandbox/Dockerfile -t {SANDBOX_IMAGE} .",
             )
 
-        return run_docker(filename)
+        return run_docker(filename, workspace=workspace)
 
     # mode == MODE_LOCAL_UNSANDBOXED (explicit opt-in only)
-    return run_local(filename)
+    return run_local(filename, workspace=workspace)
 
 
 if __name__ == "__main__":

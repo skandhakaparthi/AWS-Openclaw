@@ -4,7 +4,7 @@ from datetime import datetime
 
 
 class TaskState:
-    def __init__(self, task_id):
+    def __init__(self, task_id, original_request=None):
         self.task_id = task_id
         self.state = {
             "task_id": task_id,
@@ -12,7 +12,20 @@ class TaskState:
             "started_at": datetime.now().isoformat(),
             "completed_at": None,
             "iterations": 0,
-            "estimated_cost": 0.0,
+            "estimated_cost": None,
+            "cost_measurement_available": False,
+            "original_request": original_request,
+            "plan": [],
+            "current_step": 0,
+            "files_inspected": [],
+            "files_changed": [],
+            "tool_invocations": [],
+            "latest_execution_result": None,
+            "latest_test_result": None,
+            "error_classification": None,
+            "previous_error_signatures": [],
+            "final_summary": None,
+            "rollback_occurred": False,
             "history": []
         }
 
@@ -33,7 +46,8 @@ class TaskState:
             self.state["completed_at"] = datetime.now().isoformat()
 
     def add_cost(self, amount):
-        self.state["estimated_cost"] += amount
+        current = self.state["estimated_cost"] or 0.0
+        self.state["estimated_cost"] = current + amount
 
     def save(self):
         Path("task_state").mkdir(exist_ok=True)

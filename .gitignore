@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 .env
 task_state/
+.agent_tasks/

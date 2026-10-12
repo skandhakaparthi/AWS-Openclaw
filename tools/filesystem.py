@@ -6,12 +6,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE = (PROJECT_ROOT / "workspace").resolve()
 
 
-def _safe_path(filename):
+def _safe_path(filename, workspace=None):
     """Resolve a path and ensure it stays inside the workspace."""
-    candidate = (WORKSPACE / filename).resolve()
+    root = Path(workspace).resolve() if workspace is not None else WORKSPACE
+    candidate = (root / filename).resolve()
 
     try:
-        candidate.relative_to(WORKSPACE)
+        candidate.relative_to(root)
     except ValueError:
         raise ValueError(
             "Access denied: path must remain inside the workspace."
@@ -20,22 +21,23 @@ def _safe_path(filename):
     return candidate
 
 
-def list_files():
+def list_files(workspace=None):
     """List all files inside the workspace."""
-    if not WORKSPACE.exists():
+    root = Path(workspace).resolve() if workspace is not None else WORKSPACE
+    if not root.exists():
         return []
 
     return [
-        str(file.relative_to(WORKSPACE))
-        for file in WORKSPACE.rglob("*")
+        str(file.relative_to(root))
+        for file in root.rglob("*")
         if file.is_file()
     ]
 
 
-def read_file(filename):
+def read_file(filename, workspace=None):
     """Read a file inside the workspace."""
     try:
-        path = _safe_path(filename)
+        path = _safe_path(filename, workspace)
     except (ValueError, OSError, RuntimeError):
         return "ERROR: Access denied."
 
@@ -48,10 +50,10 @@ def read_file(filename):
         return f"ERROR: Could not read file '{filename}'."
 
 
-def write_file(filename, content):
+def write_file(filename, content, workspace=None):
     """Create or modify a file inside the workspace."""
     try:
-        path = _safe_path(filename)
+        path = _safe_path(filename, workspace)
     except (ValueError, OSError, RuntimeError):
         return "ERROR: Access denied."
 
