@@ -36,10 +36,12 @@ The benchmark job uses Linux because GitHub-hosted Ubuntu provides Docker Engine
 - `venv\Scripts\python.exe benchmarks\runner.py --output <temporary-file>` — exit code 0; BENCH-001 through BENCH-004 passed in `docker-sandbox`, with 0 failed, blocked, or timed out.
 - `docker build --file sandbox/Dockerfile --tag codepilot-sandbox .` — passed locally. The benchmark run after the build passed all scenarios, and `docker ps -a --filter name=codepilot` showed no remaining containers.
 - Local Python is 3.14. The full five-version Python matrix and an actual hosted GitHub Actions run cannot be executed from this Windows checkout.
+- Follow-up to hosted run [38249700145](https://github.com/skandhakaparthi/AWS-Openclaw/actions/runs/38249700145): all five unit-test matrix jobs failed while the dependency scan and Docker benchmarks passed. Reproducing on Linux exposed a cross-platform path-validation defect: Windows absolute paths were accepted as relative filenames on POSIX. `tools/executor.py` now rejects backslash paths and Windows absolute paths before resolving them. The existing path-traversal regression test then passed in Linux and Windows runs.
+- Post-fix Linux verification: Python 3.14, pinned requirements, `pytest tests -q -p no:cacheprovider` — **84 passed, 9 subtests passed**. Post-fix Windows verification: `venv\Scripts\python.exe -m pytest tests -q -p no:cacheprovider` — **83 passed, 1 skipped, 9 subtests passed**. Critical Ruff checks passed on the updated source.
 
 ## Viewing results and limitations
 
-After the workflow is pushed, open the repository's **Actions** tab, select **CodePilot-AI CI**, and open a run. Unit test XML and benchmark JSON are attached as workflow artifacts for 14 days. No GitHub Actions result exists yet, so this report does not claim a hosted run passed.
+Open the repository's **Actions** tab, select **CodePilot-AI CI**, and open a run. Unit test XML and benchmark JSON are attached as workflow artifacts for 14 days. The first hosted run failed the unit-test matrix; the defect is fixed and passes local Linux and Windows verification, but this change has not been pushed and a new hosted run has not yet confirmed the fix.
 
 Dependency versions are pinned, but package artifacts are fetched from PyPI during each run rather than vendored. The security job audits project dependencies; it does not audit the runner's preinstalled operating system packages. The workflow is CI only: it does not publish artifacts as releases, deploy resources, or promote patches.
 

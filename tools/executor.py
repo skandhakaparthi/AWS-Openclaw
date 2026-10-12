@@ -1,3 +1,4 @@
+import ntpath
 import os
 import shutil
 import subprocess
@@ -81,6 +82,10 @@ def safe_workspace_relative(filename, workspace=None):
     host files such as ~/.aws, ~/.ssh or the Docker socket.
     """
     if not filename or not isinstance(filename, str):
+        return None
+    # pathlib on POSIX treats Windows separators and drive paths as ordinary
+    # filename characters. Reject them explicitly on every host OS.
+    if "\\" in filename or ntpath.isabs(filename):
         return None
 
     try:
