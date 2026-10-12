@@ -4,8 +4,9 @@ from datetime import datetime
 
 
 class TaskState:
-    def __init__(self, task_id, original_request=None):
+    def __init__(self, task_id, original_request=None, state_dir=None):
         self.task_id = task_id
+        self.state_dir = Path(state_dir) if state_dir is not None else Path("task_state")
         self.state = {
             "task_id": task_id,
             "status": "CREATED",
@@ -42,7 +43,7 @@ class TaskState:
     def set_status(self, status):
         self.state["status"] = status
 
-        if status in ["SUCCESS", "FAILED", "ROLLED_BACK"]:
+        if status in ["SUCCESS", "FAILED", "ROLLED_BACK", "CANCELLED", "CLEANUP_FAILED"]:
             self.state["completed_at"] = datetime.now().isoformat()
 
     def add_cost(self, amount):
@@ -50,9 +51,8 @@ class TaskState:
         self.state["estimated_cost"] = current + amount
 
     def save(self):
-        Path("task_state").mkdir(exist_ok=True)
-
-        filename = Path("task_state") / f"{self.task_id}.json"
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        filename = self.state_dir / f"{self.task_id}.json"
 
         filename.write_text(
             json.dumps(self.state, indent=2),

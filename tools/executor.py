@@ -114,21 +114,23 @@ def _not_executed(mode, message):
 
 
 def remove_container(container_name):
-    """Best-effort container cleanup for timeout and error paths.
+    """Remove an interrupted container and return auditable cleanup status.
 
     `docker run --rm` removes the container on normal exit; this covers the
     cases where the container is still running (timeout) or the run failed
     after creation, so no container is ever left behind.
     """
     try:
-        subprocess.run(
+        result = subprocess.run(
             ["docker", "rm", "-f", container_name],
             capture_output=True,
             text=True,
             timeout=15
         )
-    except Exception:
-        pass
+        return {"success": result.returncode == 0, "return_code": result.returncode,
+                "error": result.stderr.strip() if result.returncode else None}
+    except Exception as error:
+        return {"success": False, "error": str(error)}
 
 
 def build_docker_command(filename, container_name, workspace=None):
@@ -223,7 +225,7 @@ def run_docker(filename, timeout=SANDBOX_TIMEOUT_SECONDS, workspace=None):
     except subprocess.TimeoutExpired:
 
         # Stop and remove the still-running container.
-        remove_container(container_name)
+        cleanup = remove_container(container_name)
 
         return {
             "success": False,
@@ -232,12 +234,13 @@ def run_docker(filename, timeout=SANDBOX_TIMEOUT_SECONDS, workspace=None):
             "return_code": -1,
             "execution_mode": "docker-sandbox",
             "timed_out": True,
+            "container_cleanup": cleanup,
         }
 
     except Exception as error:
 
         # Container run failed: make sure nothing is left behind.
-        remove_container(container_name)
+        cleanup = remove_container(container_name)
 
         return {
             "success": False,
@@ -246,7 +249,13 @@ def run_docker(filename, timeout=SANDBOX_TIMEOUT_SECONDS, workspace=None):
             "return_code": -2,
             "execution_mode": "docker-error",
             "timed_out": False,
+            "container_cleanup": cleanup,
         }
+
+    except BaseException:
+        # Includes cancellation: never leave a running container behind.
+        remove_container(container_name)
+        raise
 
 
 def run_local(filename, timeout=SANDBOX_TIMEOUT_SECONDS, workspace=None):

@@ -1,8 +1,9 @@
 ﻿import uuid
 import ast
 import hashlib
-import shutil
 from pathlib import Path
+from tools.executor import PROJECT_ROOT
+from agent.task_workspace import TaskWorkspaceManager
 from agent.planner import TaskPlanner
 from agent.state import TaskState
 from llm.client import LLMClient
@@ -13,11 +14,12 @@ from tools.filesystem import WORKSPACE
 
 class ReActAgent:
 
-    def __init__(self, max_steps=5, workspace=None, llm_client=None):
+    def __init__(self, max_steps=5, workspace=None, llm_client=None, state_dir=None):
 
         self.llm = llm_client or LLMClient()
         self.planner = TaskPlanner(self.llm)
         self.requested_workspace = Path(workspace).resolve() if workspace else None
+        self.state_dir = Path(state_dir) if state_dir is not None else None
         self.tools = ToolRegistry(workspace=self.requested_workspace)
 
         self.safety = SafetyManager(
@@ -317,16 +319,54 @@ class ReActAgent:
         }
 
     def run(self, task, filename):
-
         task_id = "task-" + uuid.uuid4().hex[:8]
+        if self.requested_workspace is not None:
+            return self._run_in_workspace(task, filename, task_id)
 
-        if self.requested_workspace is None:
-            isolated = Path(".agent_tasks") / task_id / "workspace"
-            isolated.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(WORKSPACE, isolated)
-            self.requested_workspace = isolated.resolve()
-            self.tools = ToolRegistry(workspace=self.requested_workspace)
-        self.task_state = TaskState(task_id, original_request=task)
+        manager = TaskWorkspaceManager(WORKSPACE, PROJECT_ROOT / ".agent_tasks")
+        manager.create(task_id)
+        prior_state_dir = self.state_dir
+        if self.state_dir is None:
+            self.state_dir = manager.artifact_root / "_task_state"
+        self.requested_workspace = manager.workspace
+        self.tools = ToolRegistry(workspace=self.requested_workspace)
+        try:
+            summary = self._run_in_workspace(task, filename, task_id)
+            artifact = None
+            if self.task_state.state.get("status") == "SUCCESS":
+                artifact = manager.create_review_artifact(
+                    task_id,
+                    self.task_state.state.get("files_changed", []),
+                    self.task_state.state["status"],
+                    self.task_state.state.get("latest_test_result"),
+                )
+                self.task_state.state["review_artifact"] = artifact
+                summary["review_artifact"] = artifact
+            self.task_state.state["final_summary"] = summary
+            self.task_state.state["cleanup_result"] = manager.cleanup()
+            if not self.task_state.state["cleanup_result"]["success"]:
+                self.task_state.state["cleanup_error"] = self.task_state.state["cleanup_result"].get("error")
+                self.task_state.set_status("CLEANUP_FAILED")
+                summary["status"] = "CLEANUP_FAILED"
+            self.task_state.save()
+            return summary
+        except BaseException as error:
+            cleanup = manager.cleanup()
+            if self.task_state is not None:
+                self.task_state.set_status("CANCELLED" if isinstance(error, KeyboardInterrupt) else "FAILED")
+                self.task_state.state["cleanup_result"] = cleanup
+                if not cleanup["success"]:
+                    self.task_state.state["cleanup_error"] = cleanup.get("error")
+                self.task_state.save()
+            raise
+        finally:
+            self.requested_workspace = None
+            self.state_dir = prior_state_dir
+            self.tools = ToolRegistry()
+
+    def _run_in_workspace(self, task, filename, task_id):
+        self.task_state = TaskState(task_id, original_request=task, state_dir=self.state_dir)
+        self.task_state.set_status("RUNNING")
         self._original_task_files = {}
         self._expected_task_files = {}
         self.task_state.state["workspace"] = str(self.requested_workspace)

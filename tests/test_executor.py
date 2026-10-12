@@ -207,6 +207,34 @@ class TestDockerCommandHardening(unittest.TestCase):
         self.assertEqual(len(cleanup), 1,
                          "timed-out container must be force-removed")
         self.assertEqual(cleanup[0][3], name)
+        self.assertEqual(result["container_cleanup"]["success"], True)
+
+    def test_timeout_cleanup_failure_is_reported(self):
+        def responder(command, **kwargs):
+            if command[:2] == ["docker", "run"]:
+                raise subprocess.TimeoutExpired(cmd=command, timeout=10)
+            return ok_result(1, stderr="daemon refused cleanup")
+
+        result, _ = self._docker_call(responder=responder)
+        self.assertFalse(result["container_cleanup"]["success"])
+        self.assertEqual(result["container_cleanup"]["error"], "daemon refused cleanup")
+
+    def test_cancellation_attempts_container_cleanup(self):
+        calls = []
+
+        def responder(command, **kwargs):
+            calls.append(list(command))
+            if command[:2] == ["docker", "run"]:
+                raise KeyboardInterrupt()
+            return ok_result(0)
+
+        with execution_mode("docker"), \
+                patch.object(executor, "docker_available", return_value=True), \
+                patch.object(executor, "sandbox_image_available", return_value=True), \
+                patch.object(executor.subprocess, "run", side_effect=responder):
+            with self.assertRaises(KeyboardInterrupt):
+                executor.run_python_file("factorial.py")
+        self.assertTrue(any(command[:3] == ["docker", "rm", "-f"] for command in calls))
 
     def test_non_zero_exit_code_reported(self):
         def responder(command, **kwargs):

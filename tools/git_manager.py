@@ -30,11 +30,17 @@ def create_checkpoint(cwd=None):
 
 
 def rollback(checkpoint_name, cwd=None):
-    print(f"Rolling back to: {checkpoint_name}")
+    """Reject repository-wide rollback; tasks use disposable workspace copies.
 
-    run_git_command(["git", "reset", "--hard", checkpoint_name], cwd=cwd)
-
-    print("Rollback completed.")
+    A checkpoint name alone cannot prove that ``cwd`` is disposable or that
+    every overwritten edit belongs to the agent. The old reset --hard path
+    could destroy user work, so callers must use task-scoped file rollback or
+    discard the task's isolated workspace instead.
+    """
+    raise RuntimeError(
+        "Repository-wide rollback is disabled because it can destroy user changes. "
+        "Discard the isolated task workspace or use its scoped rollback."
+    )
 
 
 def get_current_commit(cwd=None):

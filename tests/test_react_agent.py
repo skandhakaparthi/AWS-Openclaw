@@ -1,7 +1,9 @@
 import unittest
 import tempfile
+import contextlib
+import io
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from agent.react_agent import ReActAgent
 from agent.state import TaskState
@@ -135,6 +137,38 @@ class TestWorkspaceIsolation(unittest.TestCase):
             self.assertFalse(result["verified"])
             self.assertEqual(result["conflicts"], ["target.py"])
             self.assertEqual((root / "target.py").read_text(encoding="utf-8"), "external edit\n")
+
+    def test_default_agent_retains_review_artifact_and_cleans_task_copy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            (source / "sample.py").write_text("print('old')\n", encoding="utf-8")
+            agent = ReActAgent(state_dir=root / "state")
+
+            def observe(filename, iteration):
+                agent.tools.write_file(filename, "print('new')\n")
+                agent.task_state.state["files_changed"].append(filename)
+                return {"success": True, "return_code": 0, "output": "new\n",
+                        "error": "", "execution_mode": "docker-sandbox"}
+
+            def plan(task):
+                agent.history.append({"phase": "PLAN", "task": task, "subtasks": ["edit"]})
+                return ["edit"]
+
+            with patch("agent.react_agent.WORKSPACE", source), \
+                    patch("agent.react_agent.PROJECT_ROOT", root), \
+                    patch.object(agent, "plan", side_effect=plan), \
+                    patch.object(agent, "observe", side_effect=observe), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                summary = agent.run("edit sample", "sample.py")
+
+            artifact = summary["review_artifact"]
+            self.assertTrue(Path(artifact["patch_path"]).is_file())
+            self.assertTrue(Path(artifact["manifest_path"]).is_file())
+            self.assertTrue(agent.task_state.state["cleanup_result"]["success"])
+            self.assertFalse(Path(summary["workspace"]).exists())
+            self.assertEqual((source / "sample.py").read_text(encoding="utf-8"), "print('old')\n")
 
 
 if __name__ == "__main__":

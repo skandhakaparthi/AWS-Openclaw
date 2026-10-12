@@ -55,7 +55,8 @@ def run_one(task, source_workspace, timeout=60):
         initial_snapshot = _snapshot(workspace)
         agent = ReActAgent(max_steps=5, workspace=workspace,
                            llm_client=_RepeatErrorLLM() if task["id"] == "BENCH-004"
-                           else LLMClient(mode="mock"))
+                           else LLMClient(mode="mock"),
+                           state_dir=Path(temp) / "task_state")
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             agent.run(task["description"], SCENARIOS[task["id"]][0])

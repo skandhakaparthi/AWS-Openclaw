@@ -72,14 +72,13 @@ class TestGitManagerInTemporaryRepository(unittest.TestCase):
         tags = self._git("tag", "--list").splitlines()
         self.assertIn(name, tags)
 
-    def test_rollback_restores_file_only_in_temp_repo(self):
+    def test_repository_wide_rollback_is_refused_without_mutation(self):
         checkpoint = git_manager.create_checkpoint(cwd=self.repo)
 
         Path(self.repo, "app.py").write_text("value = 999\n", encoding="utf-8")
-        git_manager.rollback(checkpoint, cwd=self.repo)
-
-        restored = Path(self.repo, "app.py").read_text(encoding="utf-8")
-        self.assertEqual(restored, "value = 1\n")
+        with self.assertRaisesRegex(RuntimeError, "disabled"):
+            git_manager.rollback(checkpoint, cwd=self.repo)
+        self.assertEqual(Path(self.repo, "app.py").read_text(encoding="utf-8"), "value = 999\n")
 
     def test_rollback_preserves_untracked_files(self):
         checkpoint = git_manager.create_checkpoint(cwd=self.repo)
@@ -88,7 +87,8 @@ class TestGitManagerInTemporaryRepository(unittest.TestCase):
         untracked.write_text("keep me\n", encoding="utf-8")
         Path(self.repo, "app.py").write_text("value = 3\n", encoding="utf-8")
 
-        git_manager.rollback(checkpoint, cwd=self.repo)
+        with self.assertRaisesRegex(RuntimeError, "disabled"):
+            git_manager.rollback(checkpoint, cwd=self.repo)
 
         self.assertTrue(untracked.exists(),
                         "rollback must not delete untracked files")
