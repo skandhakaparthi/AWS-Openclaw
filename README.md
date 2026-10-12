@@ -60,4 +60,4 @@ Supporting services:
 
 ## Development Mode
 
-The project uses a mock LLM by default, so AWS Bedrock is optional during local development. Docker is the preferred execution sandbox; local execution is used only as a clearly identified development fallback.
+The project uses a mock LLM by default, so AWS Bedrock is optional during local development. Code execution is fail-closed: by default (`CODEPILOT_EXECUTION_MODE=docker`) files run inside the Docker sandbox and are NOT executed if Docker or the sandbox image is unavailable. Local execution requires the explicit opt-in `CODEPILOT_EXECUTION_MODE=local-unsandboxed` and is clearly labeled UNSANDBOXED. Build the sandbox image once from the repository root: `docker build -f sandbox/Dockerfile -t codepilot-sandbox .`
