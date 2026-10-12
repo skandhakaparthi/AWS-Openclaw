@@ -2,7 +2,7 @@
 
 ## Local Web Demo
 
-The project includes a localhost-only dashboard that runs the existing agent in mock-model mode. It does not need AWS credentials or make Bedrock calls. Code execution still requires the Docker sandbox; if Docker is unavailable, tasks fail closed.
+The project includes a localhost-only dashboard that runs the existing agent in mock-model mode. It does not need AWS credentials or make Bedrock calls. Code execution still requires the Docker sandbox; if Docker is unavailable, tasks fail closed. The mock demo currently verifies two task/file pairs: factorial with `factorial.py`, and division-by-zero handling with `repair_loop_temp.py`. It rejects unsupported tasks and mismatched file selections instead of substituting a different demo task.
 
 From the project root, start the dashboard with the project environment:
 
@@ -16,7 +16,7 @@ Open [http://127.0.0.1:8765](http://127.0.0.1:8765). If the `codepilot-sandbox` 
 docker build -f sandbox/Dockerfile -t codepilot-sandbox .
 ```
 
-Select a demo Python file, describe the task, and run it in its isolated task workspace. After the acceptance check succeeds, review the generated diff and choose **Approve and promote** or **Reject patch**. Promotion is never automatic. Stop the server with Ctrl+C.
+Select the demo file matching the request, describe the task, and run it in a new isolated task workspace. Factorial runs include checks for `factorial(0) == 1`, `factorial(1) == 1`, and `factorial(5) == 120`, followed by an independent Docker acceptance run. After the task-specific acceptance check succeeds, review the generated diff and choose **Approve and promote** or **Reject patch**. Promotion is never automatic. Stop the server with Ctrl+C.
 
 ## Autonomous Coding Agent
 

@@ -97,6 +97,32 @@
     $("classification").textContent = task.error_classification || "";
   }
 
+  function renderTaskContext(task) {
+    $("actual-task").textContent = task.task || "No task submitted";
+    $("actual-file").textContent = task.filename || "—";
+    $("executed-workspace").textContent = task.workspace || "Not created";
+    const acceptance = task.acceptance || {};
+    $("actual-acceptance").textContent = acceptance.verified
+      ? `${acceptance.profile} · verified`
+      : `${acceptance.profile || "Not verified"} · pending`;
+  }
+
+  function resetTaskView(task, filename) {
+    activeTaskId = null;
+    reviewPanel.hidden = true;
+    $("promotion-result").hidden = true;
+    $("diff-files").replaceChildren();
+    $("diff-content").textContent = "No patch is available until task-specific acceptance checks pass.";
+    $("approve-button").disabled = false;
+    $("reject-button").disabled = false;
+    renderTaskContext({ task, filename, workspace: null, acceptance: null });
+    setStatus("READY", "Validating the submitted task and selected file.", null);
+    renderPlan([]); renderLogs([]); renderFiles([]);
+    renderExecution({ status: "READY" });
+    $("iteration-current").textContent = "0";
+    $("iteration-progress").style.width = "0%";
+  }
+
   function eventDescription(event) {
     if (event.phase === "PLAN") return `${(event.subtasks || []).length} steps added to the plan`;
     if (event.phase === "OBSERVE") {
@@ -179,6 +205,7 @@
     if (!activeTaskId) return;
     const task = await api(`/api/tasks/${activeTaskId}`);
     setStatus(task.status, task.message, task.task_id);
+    renderTaskContext(task);
     renderPlan(task.plan || []);
     renderExecution(task);
     renderLogs(task.logs || []);
@@ -220,8 +247,7 @@
   taskForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     formError.hidden = true;
-    reviewPanel.hidden = true;
-    $("promotion-result").hidden = true;
+    resetTaskView(taskInput.value, fileSelect.value);
     try {
       const result = await api("/api/tasks", {
         method: "POST",
@@ -230,7 +256,7 @@
       activeTaskId = result.task_id;
       runButton.disabled = true;
       runButton.textContent = "Agent running…";
-      setStatus("RUNNING", "Running the existing agent in a temporary workspace.", activeTaskId);
+      setStatus("RUNNING", "Running the submitted request in its own isolated workspace.", activeTaskId);
       renderPlan([]); renderLogs([]); renderFiles([]);
       $("iteration-current").textContent = "0";
       $("iteration-progress").style.width = "0%";
@@ -286,14 +312,17 @@
       const [health, files] = await Promise.all([api("/api/health"), api("/api/workspace-files")]);
       renderHealth(health);
       fileSelect.replaceChildren();
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "Choose a matching demo file";
+      placeholder.disabled = true;
+      placeholder.selected = true;
+      fileSelect.append(placeholder);
       for (const filename of files.files) {
         const option = document.createElement("option");
         option.value = filename;
         option.textContent = filename;
         fileSelect.append(option);
-      }
-      if ([...fileSelect.options].some((option) => option.value === "repair_loop_temp.py")) {
-        fileSelect.value = "repair_loop_temp.py";
       }
       runButton.disabled = files.files.length === 0;
       if (!files.files.length) showError("No Python demo files are available in the local workspace.");

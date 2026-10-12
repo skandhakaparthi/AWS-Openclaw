@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import hmac
 import http.server
 import io
@@ -10,6 +11,7 @@ import ipaddress
 import json
 import re
 import secrets
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -18,7 +20,12 @@ from urllib.parse import urlsplit
 from agent.react_agent import PROJECT_ROOT, ReActAgent
 from agent.task_workspace import TaskWorkspaceManager
 from llm.client import LLMClient
-from tools.executor import docker_available, resolve_mode, sandbox_image_available
+from tools.executor import (
+    docker_available,
+    resolve_mode,
+    run_python_file,
+    sandbox_image_available,
+)
 from tools.filesystem import WORKSPACE
 
 HOST = "127.0.0.1"
@@ -35,6 +42,77 @@ STATIC_FILES = {
     "/static/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/static/styles.css": ("styles.css", "text/css; charset=utf-8"),
 }
+
+FACTORIAL_FIXTURE = """def factorial(n):
+    if n < 0:
+        raise ValueError("factorial is undefined for negative integers")
+    if n in (0, 1):
+        return 1
+    return n * factorial(n - 1)
+
+
+def _run_task_checks():
+    assert factorial(0) == 1, "factorial(0) must equal 1"
+    assert factorial(1) == 1, "factorial(1) must equal 1"
+    assert factorial(5) == 120, "factorial(5) must equal 120"
+    print("FACTORIAL_FIXTURE_CHECKS_PASSED")
+
+
+if __name__ == "__main__":
+    _run_task_checks()
+"""
+
+ACCEPTANCE_PROFILES = {
+    "factorial": {
+        "id": "factorial-v1",
+        "filename": "factorial.py",
+        "criteria": [
+            "factorial(0) == 1",
+            "factorial(1) == 1",
+            "factorial(5) == 120",
+        ],
+        "marker": "CODEPILOT_ACCEPTANCE:FACTORIAL:0=1,1=1,5=120",
+    },
+    "division_zero": {
+        "id": "division-zero-v1",
+        "filename": "repair_loop_temp.py",
+        "criteria": [
+            "divide(10, 0) returns a clear division-by-zero message",
+            "divide(10, 2) returns 5",
+        ],
+        "marker": "CODEPILOT_ACCEPTANCE:DIVISION_ZERO:10/0=message,10/2=5",
+    },
+}
+
+
+def _acceptance_profile(task, filename):
+    factorial_requested = re.search(r"\bfactorial\b", task, re.IGNORECASE)
+    division_requested = re.search(
+        r"\b(divide|division)\b.*\bzero\b|\bzero\b.*\b(divide|division)\b",
+        task,
+        re.IGNORECASE,
+    )
+    if factorial_requested and division_requested:
+        raise ValueError(
+            "Choose one demo task at a time: factorial or division-by-zero."
+        )
+    profile_key = (
+        "factorial"
+        if factorial_requested
+        else ("division_zero" if division_requested else None)
+    )
+    if profile_key is None:
+        raise ValueError(
+            "This local mock demo can verify factorial or division-by-zero tasks. "
+            "Describe one of those tasks explicitly."
+        )
+    profile = ACCEPTANCE_PROFILES[profile_key]
+    if filename != profile["filename"]:
+        raise ValueError(
+            f"This request requires {profile['filename']}; the selected file was {filename}. "
+            "Choose the matching demo file and resubmit."
+        )
+    return {**profile, "kind": profile_key}
 
 
 class _BoundedWriter(io.TextIOBase):
@@ -134,7 +212,11 @@ class DemoService:
         self.workspace = Path(workspace).resolve()
         self.artifact_root = Path(artifact_root).resolve()
         self.agent_factory = agent_factory or (
-            lambda: ReActAgent(llm_client=LLMClient(mode="mock"))
+            lambda task_workspace, state_dir: ReActAgent(
+                workspace=task_workspace,
+                state_dir=state_dir,
+                llm_client=LLMClient(mode="mock"),
+            )
         )
         self.csrf_token = secrets.token_urlsafe(32)
         self._lock = threading.RLock()
@@ -173,6 +255,7 @@ class DemoService:
             raise ValueError("Choose a Python file from the demo workspace.")
         if filename not in self.workspace_files():
             raise ValueError("That file is not available in the demo workspace.")
+        profile = _acceptance_profile(task, filename)
         if not self._slots.acquire(blocking=False):
             raise RuntimeError(
                 "A task is already running. Wait for it to finish before starting another."
@@ -181,7 +264,14 @@ class DemoService:
         task_key = secrets.token_hex(16)
         record = {
             "task_id": task_key,
+            "task": task,
             "filename": filename,
+            "workspace": None,
+            "acceptance": {
+                "profile": profile["id"],
+                "criteria": profile["criteria"],
+                "verified": False,
+            },
             "status": "RUNNING",
             "created_at": time.time(),
             "iteration": 0,
@@ -196,6 +286,8 @@ class DemoService:
             "manifest_path": None,
             "agent": None,
             "task_text": task,
+            "profile": profile,
+            "fixture_files": [],
         }
         with self._lock:
             self._tasks[task_key] = record
@@ -232,8 +324,21 @@ class DemoService:
             self._tasks.pop(oldest, None)
 
     def _run_task(self, task_key, task, filename):
+        task_root_id = "task-" + task_key
+        manager = TaskWorkspaceManager(self.workspace, self.artifact_root)
         try:
-            agent = self.agent_factory()
+            task_workspace = manager.create(task_root_id)
+            record = self._tasks[task_key]
+            profile = record["profile"]
+            record["workspace"] = str(task_workspace)
+            if profile["kind"] == "factorial":
+                (task_workspace / filename).write_text(
+                    FACTORIAL_FIXTURE, encoding="utf-8"
+                )
+                record["fixture_files"] = [filename]
+
+            state_dir = manager.task_root / "task_state"
+            agent = self.agent_factory(task_workspace, state_dir)
             with self._lock:
                 self._tasks[task_key]["agent"] = agent
             # The agent's console output is bounded and intentionally not returned;
@@ -242,42 +347,110 @@ class DemoService:
             with contextlib.redirect_stdout(captured):
                 summary = agent.run(task, filename)
             state = getattr(getattr(agent, "task_state", None), "state", {}) or {}
-            execution = state.get("latest_execution_result")
-            check = state.get("latest_test_result")
-            passed = (
-                state.get("status") == "SUCCESS"
-                and isinstance(check, dict)
-                and check.get("verified") is True
-                and isinstance(execution, dict)
-                and execution.get("success") is True
-                and execution.get("return_code") == 0
-                and execution.get("execution_mode") == "docker-sandbox"
-                and execution.get("timed_out") is not True
+            agent_execution = state.get("latest_execution_result")
+            agent_check = state.get("latest_test_result")
+            request_metadata = state.get("request_metadata") or {}
+            request_digest = hashlib.sha256(
+                task.encode("utf-8", errors="replace")
+            ).hexdigest()
+            executed_selected_file = any(
+                isinstance(item, dict)
+                and item.get("tool") == "run_python"
+                and item.get("filename") == filename
+                for item in state.get("tool_invocations", [])
             )
-            status = "SUCCESS" if passed else state.get("status", "FAILED")
+            request_matches = request_metadata.get("sha256") == request_digest
+            agent_passed = (
+                isinstance(summary, dict)
+                and summary.get("status") == "SUCCESS"
+                and state.get("status") == "SUCCESS"
+                and request_matches
+                and executed_selected_file
+                and isinstance(agent_check, dict)
+                and agent_check.get("verified") is True
+                and isinstance(agent_execution, dict)
+                and agent_execution.get("success") is True
+                and agent_execution.get("return_code") == 0
+                and agent_execution.get("execution_mode") == "docker-sandbox"
+                and agent_execution.get("timed_out") is not True
+            )
             classification = state.get("error_classification")
+            acceptance_execution = None
+            acceptance_verified = False
+            if agent_passed:
+                acceptance_execution = self._run_acceptance(
+                    manager, task_workspace, filename, profile
+                )
+                acceptance_verified = (
+                    isinstance(acceptance_execution, dict)
+                    and acceptance_execution.get("success") is True
+                    and acceptance_execution.get("return_code") == 0
+                    and acceptance_execution.get("execution_mode") == "docker-sandbox"
+                    and acceptance_execution.get("timed_out") is not True
+                    and profile["marker"] in str(acceptance_execution.get("output", ""))
+                )
+
+            passed = agent_passed and acceptance_verified
+            status = "SUCCESS" if passed else state.get("status", "FAILED")
+            if not agent_passed and state.get("status") == "SUCCESS":
+                status = "FAILED"
+                classification = "REQUEST_STATE_MISMATCH"
+            elif agent_passed and not acceptance_verified:
+                status = "FAILED"
+                classification = "ACCEPTANCE_FAILED"
             if not passed and (
                 classification == "TIMEOUT"
-                or (isinstance(execution, dict) and execution.get("timed_out") is True)
+                or (
+                    isinstance(agent_execution, dict)
+                    and agent_execution.get("timed_out") is True
+                )
+                or (
+                    isinstance(acceptance_execution, dict)
+                    and acceptance_execution.get("timed_out") is True
+                )
             ):
                 status = "TIMED_OUT"
-            artifact = (
-                summary.get("review_artifact") if isinstance(summary, dict) else None
+            acceptance = {
+                "profile": profile["id"],
+                "criteria": profile["criteria"],
+                "verified": acceptance_verified,
+                "execution": _execution_view(acceptance_execution),
+            }
+            state["requested_task"] = task
+            state["selected_file"] = filename
+            state["task_acceptance"] = acceptance
+            state["latest_execution_result"] = acceptance_execution or agent_execution
+            state["latest_test_result"] = {"verified": passed, "acceptance": acceptance}
+
+            manifest_path = None
+            files = list(state.get("files_changed", []))
+            if passed:
+                files.extend(record.get("fixture_files", []))
+                files = sorted(set(files))
+                artifact = manager.create_review_artifact(
+                    task_root_id,
+                    files,
+                    "SUCCESS",
+                    {
+                        "requested_task": task,
+                        "selected_file": filename,
+                        "dashboard_task_id": task_key,
+                        "workspace": str(task_workspace),
+                        "agent": agent_check,
+                        "task_acceptance": acceptance,
+                    },
+                )
+                manifest_path = artifact["manifest_path"]
+                files = artifact["modified_files"]
+
+            message = self._status_message(
+                status, classification, acceptance_execution or agent_execution, passed
             )
-            manifest_path = (
-                artifact.get("manifest_path")
-                if passed and isinstance(artifact, dict)
-                else None
-            )
-            message = self._status_message(status, classification, execution, passed)
             history = _history_view(getattr(agent, "history", []))
             logs_json = json.dumps(history, ensure_ascii=False)
             while len(logs_json) > MAX_LOG_CHARS and history:
                 history.pop(0)
                 logs_json = json.dumps(history, ensure_ascii=False)
-            files = state.get("files_changed", [])
-            if isinstance(artifact, dict):
-                files = artifact.get("modified_files", files)
             files = [
                 name
                 for name in files
@@ -294,13 +467,18 @@ class DemoService:
                                 str(item)[:500] for item in state.get("plan", [])[:10]
                             ],
                             "logs": history,
-                            "execution": _execution_view(execution),
+                            "execution": _execution_view(
+                                acceptance_execution or agent_execution
+                            ),
+                            "agent_execution": _execution_view(agent_execution),
                             "verification": {
                                 "verified": passed,
-                                "return_code": execution.get("return_code")
-                                if isinstance(execution, dict)
+                                "return_code": acceptance_execution.get("return_code")
+                                if isinstance(acceptance_execution, dict)
                                 else None,
                             },
+                            "acceptance": acceptance,
+                            "task_state_id": state.get("task_id"),
                             "error_classification": _short(classification, 100),
                             "modified_files": files,
                             "message": message,
@@ -325,7 +503,49 @@ class DemoService:
                         }
                     )
         finally:
+            cleanup = manager.cleanup()
+            if not cleanup.get("success"):
+                with self._lock:
+                    record = self._tasks.get(task_key)
+                    if record is not None:
+                        record.update(
+                            {
+                                "status": "FAILED",
+                                "message": "Task workspace cleanup failed; patch promotion is disabled.",
+                                "acceptance": {
+                                    **record.get("acceptance", {}),
+                                    "verified": False,
+                                },
+                                "verification": {"verified": False},
+                                "manifest_path": None,
+                                "error_classification": "WORKSPACE_CLEANUP_FAILED",
+                            }
+                        )
             self._slots.release()
+
+    @staticmethod
+    def _run_acceptance(manager, task_workspace, filename, profile):
+        verify_dir = manager.task_root / "acceptance"
+        verify_dir.mkdir(parents=True, exist_ok=False)
+        shutil.copyfile(task_workspace / filename, verify_dir / filename)
+        if profile["kind"] == "factorial":
+            verifier_name = "verify_factorial.py"
+            verifier = """from factorial import factorial
+assert factorial(0) == 1, "factorial(0) must be 1"
+assert factorial(1) == 1, "factorial(1) must be 1"
+assert factorial(5) == 120, "factorial(5) must be 120"
+print("CODEPILOT_ACCEPTANCE:FACTORIAL:0=1,1=1,5=120")
+"""
+        else:
+            verifier_name = "verify_division_zero.py"
+            verifier = """from repair_loop_temp import divide
+zero_result = divide(10, 0)
+assert isinstance(zero_result, str) and "zero" in zero_result.lower(), "division by zero must return a clear message"
+assert divide(10, 2) == 5, "normal division must remain correct"
+print("CODEPILOT_ACCEPTANCE:DIVISION_ZERO:10/0=message,10/2=5")
+"""
+        (verify_dir / verifier_name).write_text(verifier, encoding="utf-8")
+        return run_python_file(verifier_name, workspace=verify_dir)
 
     @staticmethod
     def _status_message(status, classification, execution, passed):
@@ -382,6 +602,13 @@ class DemoService:
             status = record.get("status") if record else None
         if status != "SUCCESS" or not manifest_path:
             return None
+        with self._lock:
+            accepted = (
+                self._tasks.get(task_key, {}).get("acceptance", {}).get("verified")
+                is True
+            )
+        if not accepted:
+            return None
         try:
             manifest_file = Path(manifest_path).resolve(strict=True)
             manifest_file.relative_to(self.artifact_root)
@@ -407,6 +634,7 @@ class DemoService:
                 record is None
                 or record.get("status") != "SUCCESS"
                 or not record.get("manifest_path")
+                or record.get("acceptance", {}).get("verified") is not True
             ):
                 return None
             if record.get("promotion_status") == "PROMOTING":
@@ -452,6 +680,7 @@ class DemoService:
                 record is None
                 or record.get("status") != "SUCCESS"
                 or not record.get("manifest_path")
+                or record.get("acceptance", {}).get("verified") is not True
             ):
                 return False
             if record.get("promotion_status") == "PROMOTING":
@@ -591,6 +820,17 @@ class _RequestHandler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         if not self._guard(write=True):
+            # Consume small rejected request bodies before responding. Otherwise
+            # Windows may reset the TCP connection while unread bytes remain,
+            # hiding the intended 403 response from the local browser/client.
+            try:
+                rejected_length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                rejected_length = MAX_BODY_BYTES + 1
+            if 0 <= rejected_length <= MAX_BODY_BYTES:
+                self.rfile.read(rejected_length)
+            else:
+                self.close_connection = True
             return self._json_error(
                 403, "Request origin or local approval token was rejected."
             )

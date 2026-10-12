@@ -30,8 +30,8 @@
         <p class="muted">The agent works in a temporary copy. Your project files stay untouched until you approve a patch.</p>
         <form id="task-form">
           <label for="task-input">Task description</label>
-          <textarea id="task-input" name="task" maxlength="1500" required placeholder="Describe the change and how you will verify it…">Handle division by zero safely and print a clear message.</textarea>
-          <div class="field-meta"><span>Be specific about expected behavior</span><span id="char-count">0 / 1500</span></div>
+          <textarea id="task-input" name="task" maxlength="1500" required placeholder="Example: implement factorial and verify results for 0, 1, and 5."></textarea>
+          <div class="field-meta"><span>Verified demo tasks: factorial or division by zero</span><span id="char-count">0 / 1500</span></div>
 
           <label for="filename-select">Demo file</label>
           <div class="select-wrap"><select id="filename-select" name="filename" required></select><span aria-hidden="true">⌄</span></div>
@@ -64,6 +64,12 @@
           <div class="card-heading"><span class="section-kicker">TASK STATUS</span><span id="task-id-label" class="task-id">NO ACTIVE TASK</span></div>
           <div class="status-line"><span id="status-orb" class="status-orb idle"></span><span id="status-text">Ready for a task</span></div>
           <p id="status-message" class="muted status-message">Submit a task to start the existing CodePilot agent.</p>
+          <div class="task-context">
+            <span>REQUEST</span><strong id="actual-task">No task submitted</strong>
+            <span>EXECUTED FILE</span><code id="actual-file">—</code>
+            <span>WORKSPACE USED</span><code id="executed-workspace">—</code>
+            <span>ACCEPTANCE</span><strong id="actual-acceptance">Not verified</strong>
+          </div>
         </article>
         <article class="panel iteration-panel">
           <div class="section-kicker">AGENT PROGRESS</div>
@@ -104,7 +110,7 @@
 
         <section id="review-panel" class="panel review-panel" hidden>
           <div class="panel-title"><div><span class="section-kicker">HUMAN REVIEW REQUIRED</span><h2>Patch review</h2></div><span class="review-required"><i></i> NOT PROMOTED</span></div>
-          <p class="muted">The acceptance check passed in Docker. Inspect the patch before choosing whether to apply it to the primary workspace.</p>
+          <p class="muted">The task-specific acceptance checks passed in Docker. Inspect the patch before choosing whether to apply it to the primary workspace.</p>
           <div id="diff-files" class="diff-files"></div>
           <pre id="diff-content" class="diff-content">Loading patch…</pre>
           <div id="promotion-result" class="promotion-result" hidden></div>
