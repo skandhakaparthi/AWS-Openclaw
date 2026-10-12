@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1018">
+  <meta name="codepilot-csrf" content="__CODEPILOT_CSRF_TOKEN__">
+  <title>CodePilot-AI · Local Demo</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="CodePilot-AI dashboard">
+      <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+      <span>CodePilot<span class="brand-accent">-AI</span><small>LOCAL WORKBENCH</small></span>
+    </a>
+    <div class="topbar-right">
+      <span class="mode-pill"><i></i> MOCK MODEL</span>
+      <span id="docker-pill" class="docker-pill"><i></i><span>Checking Docker…</span></span>
+      <span class="local-label"><span class="lock-icon">⌑</span> LOOPBACK ONLY</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <section class="panel task-panel">
+        <div class="section-kicker"><span class="kicker-dot"></span> NEW AGENT TASK</div>
+        <h1>What should CodePilot work on?</h1>
+        <p class="muted">The agent works in a temporary copy. Your project files stay untouched until you approve a patch.</p>
+        <form id="task-form">
+          <label for="task-input">Task description</label>
+          <textarea id="task-input" name="task" maxlength="1500" required placeholder="Describe the change and how you will verify it…">Handle division by zero safely and print a clear message.</textarea>
+          <div class="field-meta"><span>Be specific about expected behavior</span><span id="char-count">0 / 1500</span></div>
+
+          <label for="filename-select">Demo file</label>
+          <div class="select-wrap"><select id="filename-select" name="filename" required></select><span aria-hidden="true">⌄</span></div>
+
+          <button id="run-button" class="button button-primary" type="submit">
+            <span class="play-icon" aria-hidden="true">▶</span> Run in isolated workspace
+          </button>
+          <p id="form-error" class="form-error" role="alert" hidden></p>
+        </form>
+        <div class="trust-note"><span aria-hidden="true">◈</span><span><strong>Sandbox required.</strong> Docker is the only execution route. If it is unavailable, the task fails closed.</span></div>
+      </section>
+
+      <section class="panel guardrails-panel">
+        <div class="section-kicker">RUN GUARDRAILS</div>
+        <div class="guardrail"><span class="guard-icon">◷</span><span>Bounded run</span><strong>60 sec</strong></div>
+        <div class="guardrail"><span class="guard-icon">⟳</span><span>Repair attempts</span><strong>Up to 5</strong></div>
+        <div class="guardrail"><span class="guard-icon">▣</span><span>Workspace</span><strong>Temporary copy</strong></div>
+        <div class="guardrail"><span class="guard-icon">✓</span><span>Promotion</span><strong>Manual approval</strong></div>
+      </section>
+      <div class="sidebar-foot"><span class="pulse-dot"></span> Local demo · no AWS connection</div>
+    </aside>
+
+    <section class="workspace-view" aria-label="Task dashboard">
+      <div id="docker-warning" class="notice notice-warning" hidden>
+        <strong>Docker sandbox unavailable.</strong> The agent will refuse code execution; it will not run code on the host.
+      </div>
+
+      <section class="overview-grid">
+        <article class="panel status-panel">
+          <div class="card-heading"><span class="section-kicker">TASK STATUS</span><span id="task-id-label" class="task-id">NO ACTIVE TASK</span></div>
+          <div class="status-line"><span id="status-orb" class="status-orb idle"></span><span id="status-text">Ready for a task</span></div>
+          <p id="status-message" class="muted status-message">Submit a task to start the existing CodePilot agent.</p>
+        </article>
+        <article class="panel iteration-panel">
+          <div class="section-kicker">AGENT PROGRESS</div>
+          <div class="iteration-value"><strong id="iteration-current">0</strong><span>/ 5</span></div>
+          <div class="progress-track"><span id="iteration-progress"></span></div>
+          <p class="muted">Current iteration</p>
+        </article>
+        <article class="panel mode-panel">
+          <div class="section-kicker">MODEL MODE</div>
+          <div class="mode-value"><span class="mode-spark">✳</span><strong>Mock</strong></div>
+          <p class="muted">Deterministic local responses. No Bedrock calls.</p>
+        </article>
+      </section>
+
+      <div class="content-grid">
+        <section class="panel plan-panel">
+          <div class="panel-title"><div><span class="section-kicker">EXECUTION PLAN</span><h2>Agent steps</h2></div><span id="plan-count" class="small-count">0 STEPS</span></div>
+          <ol id="plan-list" class="plan-list"><li class="empty-state">The agent plan will appear here when a task starts.</li></ol>
+        </section>
+
+        <section class="panel verification-panel">
+          <div class="panel-title"><div><span class="section-kicker">EXECUTION CHECK</span><h2>Sandbox result</h2></div><span id="verification-badge" class="result-badge neutral">NOT RUN</span></div>
+          <div class="result-meta"><span id="execution-mode">Waiting for execution</span><span id="return-code">Exit code —</span></div>
+          <div class="output-block"><div class="output-label">STANDARD OUTPUT</div><pre id="stdout">Output from the selected Python file will appear here.</pre></div>
+          <div id="stderr-wrap" class="output-block error-output" hidden><div class="output-label">ERROR DETAILS</div><pre id="stderr"></pre></div>
+          <div id="classification-row" class="classification-row" hidden><span>Error classification</span><strong id="classification"></strong></div>
+        </section>
+
+        <section class="panel logs-panel">
+          <div class="panel-title"><div><span class="section-kicker">AGENT ACTIVITY</span><h2>Structured logs</h2></div><span id="log-count" class="small-count">0 EVENTS</span></div>
+          <div id="logs-list" class="logs-list"><div class="empty-state">Plan, execution, reflection, and repair events will appear here.</div></div>
+        </section>
+
+        <section class="panel files-panel">
+          <div class="panel-title"><div><span class="section-kicker">WORKING CHANGES</span><h2>Modified files</h2></div><span id="files-count" class="small-count">0 FILES</span></div>
+          <div id="files-list" class="file-list"><div class="empty-state">No files changed yet.</div></div>
+        </section>
+
+        <section id="review-panel" class="panel review-panel" hidden>
+          <div class="panel-title"><div><span class="section-kicker">HUMAN REVIEW REQUIRED</span><h2>Patch review</h2></div><span class="review-required"><i></i> NOT PROMOTED</span></div>
+          <p class="muted">The acceptance check passed in Docker. Inspect the patch before choosing whether to apply it to the primary workspace.</p>
+          <div id="diff-files" class="diff-files"></div>
+          <pre id="diff-content" class="diff-content">Loading patch…</pre>
+          <div id="promotion-result" class="promotion-result" hidden></div>
+          <div class="review-actions"><button id="reject-button" class="button button-quiet" type="button">Reject patch</button><button id="approve-button" class="button button-approve" type="button">Approve and promote</button></div>
+        </section>
+      </div>
+      <footer class="main-foot"><span>CodePilot-AI · local demonstration</span><span>Isolated workspace <b>→</b> review <b>→</b> explicit approval</span></footer>
+    </section>
+  </main>
+
+  <dialog id="approval-dialog" class="approval-dialog">
+    <div class="dialog-mark">✓</div>
+    <span class="section-kicker">CONFIRM PROMOTION</span>
+    <h2>Apply this patch to the primary workspace?</h2>
+    <p class="muted">This is an explicit action. CodePilot will recheck conflicts before changing any files.</p>
+    <div class="dialog-actions"><button id="cancel-approval" class="button button-quiet" type="button">Cancel</button><button id="confirm-approval" class="button button-approve" type="button">Yes, promote patch</button></div>
+  </dialog>
+</body>
+</html>

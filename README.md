@@ -1,5 +1,23 @@
 # CodePilot-AI
 
+## Local Web Demo
+
+The project includes a localhost-only dashboard that runs the existing agent in mock-model mode. It does not need AWS credentials or make Bedrock calls. Code execution still requires the Docker sandbox; if Docker is unavailable, tasks fail closed.
+
+From the project root, start the dashboard with the project environment:
+
+```powershell
+.\venv\Scripts\python.exe -m web.app
+```
+
+Open [http://127.0.0.1:8765](http://127.0.0.1:8765). If the `codepilot-sandbox` image is not built yet, build it from the project root:
+
+```powershell
+docker build -f sandbox/Dockerfile -t codepilot-sandbox .
+```
+
+Select a demo Python file, describe the task, and run it in its isolated task workspace. After the acceptance check succeeds, review the generated diff and choose **Approve and promote** or **Reject patch**. Promotion is never automatic. Stop the server with Ctrl+C.
+
 ## Autonomous Coding Agent
 
 CodePilot-AI is an OpenClaw-style autonomous coding agent that plans coding tasks, executes code, observes results, analyzes errors, applies safe corrections, and rolls back unsafe changes.
