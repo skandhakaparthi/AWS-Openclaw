@@ -29,6 +29,8 @@ class ReActAgent:
 
         self.history = []
         self.task_state = None
+        self._original_task_files = {}
+        self._expected_task_files = {}
 
     def plan(self, task):
 
@@ -250,6 +252,8 @@ class ReActAgent:
                 })
                 return "STOP"
 
+            self._original_task_files.setdefault(filename, code)
+            self._expected_task_files[filename] = fixed_code
             write_result = self.tools.write_file(
                 filename,
                 fixed_code
@@ -288,6 +292,30 @@ class ReActAgent:
 
         return "STOP"
 
+    def rollback_task_changes(self):
+        """Restore only agent-written files, refusing to overwrite later edits."""
+        restored = []
+        conflicts = []
+        for filename, original in self._original_task_files.items():
+            current = self.tools.read_file(filename)
+            expected = self._expected_task_files.get(filename)
+            if current == original:
+                continue
+            if current != expected:
+                conflicts.append(filename)
+                continue
+            result = self.tools.write_file(filename, original)
+            verified = self.tools.read_file(filename)
+            if (isinstance(result, str) and result.startswith("ERROR:")) or verified != original:
+                conflicts.append(filename)
+            else:
+                restored.append(filename)
+        return {
+            "verified": not conflicts,
+            "restored_files": restored,
+            "conflicts": conflicts,
+        }
+
     def run(self, task, filename):
 
         task_id = "task-" + uuid.uuid4().hex[:8]
@@ -299,6 +327,8 @@ class ReActAgent:
             self.requested_workspace = isolated.resolve()
             self.tools = ToolRegistry(workspace=self.requested_workspace)
         self.task_state = TaskState(task_id, original_request=task)
+        self._original_task_files = {}
+        self._expected_task_files = {}
         self.task_state.state["workspace"] = str(self.requested_workspace)
         self.safety.reset()
 
@@ -506,12 +536,24 @@ class ReActAgent:
         print("\nSAVING TASK STATE")
         print("-" * 50)
 
+        if (self.task_state.state["status"] == "FAILED" and
+                self.task_state.state.get("error_classification") in {
+                    "RUNTIME_ERROR", "ASSERTION_FAILURE", "SYNTAX_ERROR",
+                    "CODE_ERROR", "REPEATED_ERROR", "MAX_ITERATIONS"
+                }):
+            rollback_result = self.rollback_task_changes()
+            self.task_state.state["rollback_result"] = rollback_result
+            self.task_state.state["rollback_occurred"] = bool(rollback_result["restored_files"])
+            if rollback_result["verified"]:
+                self.task_state.set_status("ROLLED_BACK")
+
         self.task_state.state["final_summary"] = {
             "status": self.task_state.state["status"],
             "files_modified": self.task_state.state.get("files_changed", []),
             "tests_executed": [filename],
             "execution_result": self.task_state.state.get("latest_execution_result"),
-            "rollback_occurred": False,
+            "rollback_occurred": self.task_state.state.get("rollback_occurred", False),
+            "rollback_result": self.task_state.state.get("rollback_result"),
             "estimated_model_cost_usd": None,
             "cost_limit_enforced": False,
             "workspace": str(self.requested_workspace),

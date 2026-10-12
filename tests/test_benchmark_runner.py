@@ -23,6 +23,12 @@ class TestBenchmarkRunner(unittest.TestCase):
         with self.assertRaises(SystemExit):
             runner.main(["--scenario", "BENCH-999"])
 
+    def test_repair_acceptance_compares_checkpoint_to_final_snapshot(self):
+        before = {"repair_loop_temp.py": "before-hash"}
+        after = {"repair_loop_temp.py": "after-hash"}
+        self.assertTrue(runner._changed_from_checkpoint(before, after, "repair_loop_temp.py"))
+        self.assertFalse(runner._changed_from_checkpoint(before, before, "repair_loop_temp.py"))
+
 
 if __name__ == "__main__":
     unittest.main()

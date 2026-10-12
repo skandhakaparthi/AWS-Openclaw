@@ -5,99 +5,121 @@
       "id": "BENCH-001",
       "name": "Working Program",
       "scenario_purpose": "correct program execution",
-      "status": "BLOCKED_INFRASTRUCTURE",
-      "final_agent_status": "FAILED",
+      "status": "PASSED",
+      "final_agent_status": "SUCCESS",
       "iterations": 1,
-      "elapsed_seconds": 0.017,
+      "elapsed_seconds": 0.738,
       "execution_result": {
-        "success": false,
-        "output": "",
-        "error": "Sandbox-required mode: Docker is unavailable. No code was executed. Start Docker Desktop or, for development only, explicitly set CODEPILOT_EXECUTION_MODE=local-unsandboxed (UNSANDBOXED).",
-        "return_code": -2,
-        "execution_mode": "docker-unavailable",
+        "success": true,
+        "output": "120\n",
+        "error": "",
+        "return_code": 0,
+        "execution_mode": "docker-sandbox",
         "timed_out": false
       },
-      "error_classification": "INFRA_ERROR",
+      "error_classification": "SUCCESS",
       "acceptance_check": {
-        "status": "FAILED",
+        "status": "SUCCESS",
         "files_modified": [],
         "tests_executed": [
           "factorial.py"
         ],
         "execution_result": {
-          "success": false,
-          "output": "",
-          "error": "Sandbox-required mode: Docker is unavailable. No code was executed. Start Docker Desktop or, for development only, explicitly set CODEPILOT_EXECUTION_MODE=local-unsandboxed (UNSANDBOXED).",
-          "return_code": -2,
-          "execution_mode": "docker-unavailable",
+          "success": true,
+          "output": "120\n",
+          "error": "",
+          "return_code": 0,
+          "execution_mode": "docker-sandbox",
           "timed_out": false
         },
         "rollback_occurred": false,
+        "rollback_result": null,
         "estimated_model_cost_usd": null,
         "cost_limit_enforced": false,
-        "workspace": "C:\\Users\\skand\\AppData\\Local\\Temp\\codepilot-bench-x6dkqjwm\\workspace"
+        "workspace": "C:\\Users\\skand\\AppData\\Local\\Temp\\codepilot-bench-zo2_05k2\\workspace"
       },
+      "acceptance_checks": {
+        "docker_execution": true,
+        "agent_success": true,
+        "zero_exit": true,
+        "expected_output": true
+      },
+      "working_state_matches_checkpoint": true,
       "llm_mode": "mock",
-      "mock_mode_note": "Deterministic demonstration; not evidence of live model capability."
+      "mock_mode_note": "Deterministic demonstration; not evidence of live model capability.",
+      "temporary_workspace_discarded": true
     },
     {
       "id": "BENCH-002",
       "name": "Division By Zero",
       "scenario_purpose": "code generation and repair after a runtime error",
-      "status": "BLOCKED_INFRASTRUCTURE",
-      "final_agent_status": "FAILED",
-      "iterations": 1,
-      "elapsed_seconds": 0.014,
+      "status": "PASSED",
+      "final_agent_status": "SUCCESS",
+      "iterations": 2,
+      "elapsed_seconds": 1.967,
       "execution_result": {
-        "success": false,
-        "output": "",
-        "error": "Sandbox-required mode: Docker is unavailable. No code was executed. Start Docker Desktop or, for development only, explicitly set CODEPILOT_EXECUTION_MODE=local-unsandboxed (UNSANDBOXED).",
-        "return_code": -2,
-        "execution_mode": "docker-unavailable",
+        "success": true,
+        "output": "Cannot divide by zero\n",
+        "error": "",
+        "return_code": 0,
+        "execution_mode": "docker-sandbox",
         "timed_out": false
       },
-      "error_classification": "INFRA_ERROR",
+      "error_classification": "SUCCESS",
       "acceptance_check": {
-        "status": "FAILED",
-        "files_modified": [],
+        "status": "SUCCESS",
+        "files_modified": [
+          "repair_loop_temp.py"
+        ],
         "tests_executed": [
           "repair_loop_temp.py"
         ],
         "execution_result": {
-          "success": false,
-          "output": "",
-          "error": "Sandbox-required mode: Docker is unavailable. No code was executed. Start Docker Desktop or, for development only, explicitly set CODEPILOT_EXECUTION_MODE=local-unsandboxed (UNSANDBOXED).",
-          "return_code": -2,
-          "execution_mode": "docker-unavailable",
+          "success": true,
+          "output": "Cannot divide by zero\n",
+          "error": "",
+          "return_code": 0,
+          "execution_mode": "docker-sandbox",
           "timed_out": false
         },
         "rollback_occurred": false,
+        "rollback_result": null,
         "estimated_model_cost_usd": null,
         "cost_limit_enforced": false,
-        "workspace": "C:\\Users\\skand\\AppData\\Local\\Temp\\codepilot-bench-_1dg6seh\\workspace"
+        "workspace": "C:\\Users\\skand\\AppData\\Local\\Temp\\codepilot-bench-y1q2or55\\workspace"
       },
+      "acceptance_checks": {
+        "docker_execution": true,
+        "division_error_observed": true,
+        "repair_recorded": true,
+        "source_changed": true,
+        "reexecution_succeeded": true,
+        "expected_output": true
+      },
+      "working_state_matches_checkpoint": false,
       "llm_mode": "mock",
-      "mock_mode_note": "Deterministic demonstration; not evidence of live model capability."
+      "mock_mode_note": "Deterministic demonstration; not evidence of live model capability.",
+      "temporary_workspace_discarded": true
     },
     {
       "id": "BENCH-003",
       "name": "Unknown Variable",
       "scenario_purpose": "safe refusal and isolated-workspace discard after an unknown-name failure",
-      "status": "BLOCKED_INFRASTRUCTURE",
-      "final_agent_status": "FAILED",
+      "status": "PASSED",
+      "final_agent_status": "ROLLED_BACK",
       "iterations": 1,
-      "elapsed_seconds": 0.012,
+      "elapsed_seconds": 0.923,
       "execution_result": {
         "success": false,
         "output": "",
-        "error": "Sandbox-required mode: Docker is unavailable. No code was executed. Start Docker Desktop or, for development only, explicitly set CODEPILOT_EXECUTION_MODE=local-unsandboxed (UNSANDBOXED).",
-        "return_code": -2,
-        "execution_mode": "docker-unavailable",
+        "error": "Traceback (most recent call last):\n  File \"/workspace/unknown_variable.py\", line 5, in <module>\n    print(calculate())\n          ~~~~~~~~~^^\n  File \"/workspace/unknown_variable.py\", line 2, in calculate\n    return total + 10\n           ^^^^^\nNameError: name 'total' is not defined\n",
+        "return_code": 1,
+        "execution_mode": "docker-sandbox",
         "timed_out": false
       },
-      "error_classification": "INFRA_ERROR",
+      "error_classification": "RUNTIME_ERROR",
       "acceptance_check": {
-        "status": "FAILED",
+        "status": "ROLLED_BACK",
         "files_modified": [],
         "tests_executed": [
           "unknown_variable.py"
@@ -105,61 +127,103 @@
         "execution_result": {
           "success": false,
           "output": "",
-          "error": "Sandbox-required mode: Docker is unavailable. No code was executed. Start Docker Desktop or, for development only, explicitly set CODEPILOT_EXECUTION_MODE=local-unsandboxed (UNSANDBOXED).",
-          "return_code": -2,
-          "execution_mode": "docker-unavailable",
+          "error": "Traceback (most recent call last):\n  File \"/workspace/unknown_variable.py\", line 5, in <module>\n    print(calculate())\n          ~~~~~~~~~^^\n  File \"/workspace/unknown_variable.py\", line 2, in calculate\n    return total + 10\n           ^^^^^\nNameError: name 'total' is not defined\n",
+          "return_code": 1,
+          "execution_mode": "docker-sandbox",
           "timed_out": false
         },
         "rollback_occurred": false,
+        "rollback_result": {
+          "verified": true,
+          "restored_files": [],
+          "conflicts": []
+        },
         "estimated_model_cost_usd": null,
         "cost_limit_enforced": false,
-        "workspace": "C:\\Users\\skand\\AppData\\Local\\Temp\\codepilot-bench-bzfs_7ax\\workspace"
+        "workspace": "C:\\Users\\skand\\AppData\\Local\\Temp\\codepilot-bench-0ga7sx3l\\workspace"
       },
+      "acceptance_checks": {
+        "docker_execution": true,
+        "unknown_name_error_observed": true,
+        "agent_refused_repair": true,
+        "working_state_matches_checkpoint": true,
+        "agent_rollback_verified": true
+      },
+      "working_state_matches_checkpoint": true,
       "llm_mode": "mock",
-      "mock_mode_note": "Deterministic demonstration; not evidence of live model capability."
+      "mock_mode_note": "Deterministic demonstration; not evidence of live model capability.",
+      "temporary_workspace_discarded": true,
+      "rollback_evidence": {
+        "verified": true,
+        "restored_files": [],
+        "conflicts": []
+      },
+      "temporary_workspace_note": "Benchmark copy was removed after the agent's scoped rollback result was verified."
     },
     {
       "id": "BENCH-004",
       "name": "Runaway Loop Protection",
       "scenario_purpose": "repeated equivalent error stopping",
-      "status": "BLOCKED_INFRASTRUCTURE",
-      "final_agent_status": "FAILED",
-      "iterations": 1,
-      "elapsed_seconds": 0.012,
+      "status": "PASSED",
+      "final_agent_status": "ROLLED_BACK",
+      "iterations": 2,
+      "elapsed_seconds": 1.921,
       "execution_result": {
         "success": false,
         "output": "",
-        "error": "Sandbox-required mode: Docker is unavailable. No code was executed. Start Docker Desktop or, for development only, explicitly set CODEPILOT_EXECUTION_MODE=local-unsandboxed (UNSANDBOXED).",
-        "return_code": -2,
-        "execution_mode": "docker-unavailable",
+        "error": "Traceback (most recent call last):\n  File \"/workspace/repair_loop_temp.py\", line 5, in <module>\n    print(divide(10, 0))\n          ~~~~~~^^^^^^^\n  File \"/workspace/repair_loop_temp.py\", line 2, in divide\n    return a / b\n           ~~^~~\nZeroDivisionError: division by zero\n",
+        "return_code": 1,
+        "execution_mode": "docker-sandbox",
         "timed_out": false
       },
-      "error_classification": "INFRA_ERROR",
+      "error_classification": "REPEATED_ERROR",
       "acceptance_check": {
-        "status": "FAILED",
-        "files_modified": [],
+        "status": "ROLLED_BACK",
+        "files_modified": [
+          "repair_loop_temp.py"
+        ],
         "tests_executed": [
           "repair_loop_temp.py"
         ],
         "execution_result": {
           "success": false,
           "output": "",
-          "error": "Sandbox-required mode: Docker is unavailable. No code was executed. Start Docker Desktop or, for development only, explicitly set CODEPILOT_EXECUTION_MODE=local-unsandboxed (UNSANDBOXED).",
-          "return_code": -2,
-          "execution_mode": "docker-unavailable",
+          "error": "Traceback (most recent call last):\n  File \"/workspace/repair_loop_temp.py\", line 5, in <module>\n    print(divide(10, 0))\n          ~~~~~~^^^^^^^\n  File \"/workspace/repair_loop_temp.py\", line 2, in divide\n    return a / b\n           ~~^~~\nZeroDivisionError: division by zero\n",
+          "return_code": 1,
+          "execution_mode": "docker-sandbox",
           "timed_out": false
         },
         "rollback_occurred": false,
+        "rollback_result": {
+          "verified": true,
+          "restored_files": [],
+          "conflicts": []
+        },
         "estimated_model_cost_usd": null,
         "cost_limit_enforced": false,
-        "workspace": "C:\\Users\\skand\\AppData\\Local\\Temp\\codepilot-bench-my27f_nm\\workspace"
+        "workspace": "C:\\Users\\skand\\AppData\\Local\\Temp\\codepilot-bench-_xn2ja0e\\workspace"
       },
+      "acceptance_checks": {
+        "docker_execution": true,
+        "repeated_error_detected": true,
+        "bounded_stop": true,
+        "agent_rollback_verified": true,
+        "working_state_matches_checkpoint": true
+      },
+      "working_state_matches_checkpoint": true,
       "llm_mode": "mock",
-      "mock_mode_note": "Deterministic demonstration; not evidence of live model capability."
+      "mock_mode_note": "Deterministic demonstration; not evidence of live model capability.",
+      "temporary_workspace_discarded": true,
+      "rollback_evidence": {
+        "verified": true,
+        "restored_files": [],
+        "conflicts": []
+      },
+      "temporary_workspace_note": "Benchmark copy was removed after the agent's scoped rollback result was verified."
     }
   ],
-  "passed": 0,
+  "passed": 4,
   "failed": 0,
-  "blocked": 4,
+  "blocked": 0,
   "timed_out": 0
 }

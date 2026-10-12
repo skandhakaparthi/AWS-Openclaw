@@ -1,6 +1,7 @@
 """Execute the benchmark suite through ReActAgent and its sandboxed tools."""
 import argparse
 import contextlib
+import hashlib
 import io
 import json
 import shutil
@@ -51,34 +52,59 @@ def run_one(task, source_workspace, timeout=60):
             (workspace / "repair_loop_temp.py").write_text(
                 "def divide(a, b):\n    return a / b\n\nif __name__ == '__main__':\n    print(divide(10, 0))\n",
                 encoding="utf-8")
+        initial_snapshot = _snapshot(workspace)
         agent = ReActAgent(max_steps=5, workspace=workspace,
                            llm_client=_RepeatErrorLLM() if task["id"] == "BENCH-004"
                            else LLMClient(mode="mock"))
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            summary = agent.run(task["description"], SCENARIOS[task["id"]][0])
+            agent.run(task["description"], SCENARIOS[task["id"]][0])
         state = agent.task_state.state
         result = state.get("latest_execution_result") or {}
         classification = state.get("error_classification")
+        final_snapshot = _snapshot(workspace)
+        agent_history = agent.history
+        scenario_output = result.get("output", "")
+        errors = [
+            str(item.get("result", {}).get("error", ""))
+            for item in agent_history if item.get("phase") == "OBSERVE"
+        ]
+        checks = {"docker_execution": result.get("execution_mode") == "docker-sandbox"}
+        if task["id"] == "BENCH-001":
+            checks.update({
+                "agent_success": state.get("status") == "SUCCESS",
+                "zero_exit": result.get("return_code") == 0 and result.get("success") is True,
+                "expected_output": "120" in scenario_output,
+            })
+        elif task["id"] == "BENCH-002":
+            checks.update({
+                "division_error_observed": any("ZeroDivisionError" in error for error in errors),
+                "repair_recorded": "repair_loop_temp.py" in state.get("files_changed", []),
+                "source_changed": _changed_from_checkpoint(initial_snapshot, final_snapshot, "repair_loop_temp.py"),
+                "reexecution_succeeded": state.get("status") == "SUCCESS" and result.get("success") is True and result.get("return_code") == 0,
+                "expected_output": "Cannot divide by zero" in scenario_output,
+            })
+        elif task["id"] == "BENCH-003":
+            checks.update({
+                "unknown_name_error_observed": any("NameError" in error for error in errors),
+                "agent_refused_repair": any(item.get("phase") == "REFLECT" and item.get("decision") == "STOP" for item in agent_history),
+                "working_state_matches_checkpoint": initial_snapshot == final_snapshot,
+                "agent_rollback_verified": state.get("status") == "ROLLED_BACK" and state.get("rollback_result", {}).get("verified") is True,
+            })
+        else:
+            checks.update({
+                "repeated_error_detected": classification == "REPEATED_ERROR" and len(state.get("previous_error_signatures", [])) >= 2,
+                "bounded_stop": state.get("iterations") == 2 and state.get("status") == "ROLLED_BACK",
+                "agent_rollback_verified": state.get("rollback_result", {}).get("verified") is True,
+                "working_state_matches_checkpoint": initial_snapshot == final_snapshot,
+            })
         if classification == "INFRA_ERROR":
             status = "BLOCKED_INFRASTRUCTURE"
         elif classification == "TIMEOUT" or time.monotonic() - started > timeout:
             status = "TIMED_OUT"
-        elif task["id"] == "BENCH-003" and state.get("status") == "FAILED" and classification == "RUNTIME_ERROR":
-            status = "PASSED"
-        elif task["id"] == "BENCH-004" and classification == "REPEATED_ERROR":
-            status = "PASSED"
-        elif state.get("status") == SCENARIOS[task["id"]][1]:
-            status = "PASSED"
         else:
-            status = "FAILED"
-        # A repair scenario passes only if source changed and the final run passed.
-        if task["id"] == "BENCH-002" and status != "BLOCKED_INFRASTRUCTURE":
-            original = (source_workspace / "repair_loop_temp.py").read_text(encoding="utf-8")
-            repaired = (workspace / "repair_loop_temp.py").read_text(encoding="utf-8")
-            if original == repaired or not result.get("success"):
-                status = "FAILED"
-        return {
+            status = "PASSED" if all(checks.values()) else "FAILED"
+        record = {
             "id": task["id"], "name": task["name"],
             "scenario_purpose": SCENARIO_PURPOSE[task["id"]], "status": status,
             "final_agent_status": state.get("status"),
@@ -87,9 +113,32 @@ def run_one(task, source_workspace, timeout=60):
             "execution_result": result,
             "error_classification": classification,
             "acceptance_check": state.get("final_summary"),
+            "acceptance_checks": checks,
+            "working_state_matches_checkpoint": initial_snapshot == final_snapshot,
             "llm_mode": "mock",
             "mock_mode_note": "Deterministic demonstration; not evidence of live model capability.",
         }
+    record["temporary_workspace_discarded"] = not workspace.exists()
+    if task["id"] in {"BENCH-003", "BENCH-004"}:
+        record["rollback_evidence"] = record.get("acceptance_check", {}).get("rollback_result")
+        record["temporary_workspace_note"] = "Benchmark copy was removed after the agent's scoped rollback result was verified."
+        if not record["temporary_workspace_discarded"]:
+            record["status"] = "FAILED"
+    record["elapsed_seconds"] = round(time.monotonic() - started, 3)
+    if record["elapsed_seconds"] > timeout and record["status"] != "BLOCKED_INFRASTRUCTURE":
+        record["status"] = "TIMED_OUT"
+    return record
+
+
+def _snapshot(root):
+    return {
+        path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in root.rglob("*") if path.is_file()
+    }
+
+
+def _changed_from_checkpoint(before, after, relative_path):
+    return before.get(relative_path) != after.get(relative_path)
 
 
 def main(argv=None):

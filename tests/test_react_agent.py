@@ -107,6 +107,35 @@ class TestWorkspaceIsolation(unittest.TestCase):
             self.assertEqual((isolated / "calculator.py").read_text(encoding="utf-8"), "changed\n")
         self.assertEqual((WORKSPACE / "calculator.py").read_text(encoding="utf-8"), original)
 
+    def test_scoped_rollback_restores_agent_edit_and_keeps_other_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "target.py").write_text("original\n", encoding="utf-8")
+            (root / "notes.txt").write_text("keep\n", encoding="utf-8")
+            agent = ReActAgent(workspace=root)
+            agent._original_task_files = {"target.py": "original\n"}
+            agent._expected_task_files = {"target.py": "agent edit\n"}
+            registry = ToolRegistry(workspace=root)
+            registry.write_file("target.py", "agent edit\n")
+            result = agent.rollback_task_changes()
+            self.assertTrue(result["verified"])
+            self.assertEqual(result["restored_files"], ["target.py"])
+            self.assertEqual((root / "target.py").read_text(encoding="utf-8"), "original\n")
+            self.assertEqual((root / "notes.txt").read_text(encoding="utf-8"), "keep\n")
+
+    def test_scoped_rollback_preserves_external_edit_conflict(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "target.py").write_text("external edit\n", encoding="utf-8")
+            agent = ReActAgent(workspace=root)
+            agent._original_task_files = {"target.py": "original\n"}
+            agent._expected_task_files = {"target.py": "agent edit\n"}
+            agent.tools = ToolRegistry(workspace=root)
+            result = agent.rollback_task_changes()
+            self.assertFalse(result["verified"])
+            self.assertEqual(result["conflicts"], ["target.py"])
+            self.assertEqual((root / "target.py").read_text(encoding="utf-8"), "external edit\n")
+
 
 if __name__ == "__main__":
     unittest.main()
